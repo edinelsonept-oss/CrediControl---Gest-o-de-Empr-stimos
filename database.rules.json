@@ -1,0 +1,16 @@
+{
+  "rules": {
+    ".read": true,
+    ".write": true,
+    "clients": {
+      ".indexOn": ["cpf", "fullName", "createdAt"]
+    },
+    "loans": {
+      ".indexOn": ["clientId", "status", "dueDate", "createdAt"]
+    },
+    "settings": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}
