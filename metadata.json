@@ -1,0 +1,11 @@
+{
+  "name": "CrediControl - Gestão de Empréstimos",
+  "description": "Sistema completo de gestão de empréstimos particulares com controle de clientes, contratos, cobranças automáticas com multas por atraso, documentos, mapas e relatórios.",
+  "requestFramePermissions": [
+    "geolocation",
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

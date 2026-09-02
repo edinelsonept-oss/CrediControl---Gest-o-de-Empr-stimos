@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "Client": {
+      "title": "Client",
+      "description": "Borrower client profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "fullName": { "type": "string" },
+        "cpfCnpj": { "type": "string" },
+        "phone": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "email": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["fullName", "cpfCnpj"]
+    },
+    "Loan": {
+      "title": "Loan",
+      "description": "Loan contract details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "clientId": { "type": "string" },
+        "principalAmount": { "type": "number" },
+        "interestRatePercent": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["clientId", "principalAmount"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "System configuration",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string" },
+        "companyPhone": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "clients": {
+      "schema": { "$ref": "#/entities/Client" },
+      "description": "Collection of borrower clients"
+    },
+    "loans": {
+      "schema": { "$ref": "#/entities/Loan" },
+      "description": "Collection of loan contracts"
+    },
+    "settings": {
+      "schema": { "$ref": "#/entities/Settings" },
+      "description": "System configuration documents"
+    }
+  }
+}
