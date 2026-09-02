@@ -8,26 +8,62 @@ import {
   AlertCircle,
   KeyRound,
   Check,
+  Eye,
+  EyeOff,
+  Sparkles,
 } from 'lucide-react';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import {
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+} from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { useApp } from '../context/AppContext';
 import { UserRole } from '../types';
 import { ForgotPasswordModal } from './ForgotPasswordModal';
 
+const ADMIN_EMAIL = 'edinelsonept@gmail.com';
+const ADMIN_PASSWORD = '@Coelho60';
+
 export const LoginView: React.FC = () => {
   const { loginWithCustomUser, setIsAuthenticated } = useApp();
 
   const [selectedRole, setSelectedRole] = useState<UserRole>('admin');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(ADMIN_EMAIL);
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  const handleRoleChange = (role: UserRole) => {
+    setSelectedRole(role);
+    setErrorMessage('');
+    if (role === 'admin') {
+      if (!email || email === 'funcionario@credicontrol.com') {
+        setEmail(ADMIN_EMAIL);
+      }
+    } else {
+      if (email === ADMIN_EMAIL) {
+        setEmail('funcionario@credicontrol.com');
+      }
+    }
+  };
+
+  const handleFillAdminCredentials = () => {
+    setSelectedRole('admin');
+    setEmail(ADMIN_EMAIL);
+    setPassword(ADMIN_PASSWORD);
+    setErrorMessage('');
+  };
+
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    const cleanEmail = email.trim();
+    const cleanEmailLower = cleanEmail.toLowerCase();
+
+    if (!cleanEmail || !password) {
       setErrorMessage('Preencha seu e-mail e senha.');
       return;
     }
@@ -35,20 +71,58 @@ export const LoginView: React.FC = () => {
     setIsLoading(true);
     setErrorMessage('');
 
-    setTimeout(() => {
+    try {
+      // Administrator Login Verification
+      if (cleanEmailLower === ADMIN_EMAIL.toLowerCase() || selectedRole === 'admin') {
+        if (cleanEmailLower === ADMIN_EMAIL.toLowerCase()) {
+          if (password !== ADMIN_PASSWORD) {
+            setErrorMessage('Senha incorreta para o administrador.');
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        // Synchronize with Firebase Auth session
+        try {
+          await signInWithEmailAndPassword(auth, ADMIN_EMAIL, ADMIN_PASSWORD);
+        } catch (fbErr: any) {
+          if (fbErr.code === 'auth/user-not-found' || fbErr.code === 'auth/invalid-credential') {
+            try {
+              await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, ADMIN_PASSWORD);
+            } catch (createErr) {
+              console.warn('Firebase Auth user registration note:', createErr);
+            }
+          }
+        }
+
+        loginWithCustomUser({
+          id: 'user_admin',
+          name: 'Edinelson (Admin)',
+          email: ADMIN_EMAIL,
+          role: 'admin',
+          avatarUrl:
+            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+        });
+        setIsAuthenticated(true);
+        return;
+      }
+
+      // Employee / Operator Login
       loginWithCustomUser({
-        id: `user_${selectedRole}_${Date.now()}`,
-        name: selectedRole === 'admin' ? 'Administrador' : 'Funcionário Operador',
-        email: email,
-        role: selectedRole,
+        id: `user_employee_${Date.now()}`,
+        name: 'Mariana Silva (Cobradora)',
+        email: cleanEmail,
+        role: 'employee',
         avatarUrl:
-          selectedRole === 'admin'
-            ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80'
-            : 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
+          'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
       });
       setIsAuthenticated(true);
+    } catch (err: any) {
+      console.error('Login error:', err);
+      setErrorMessage(err.message || 'Erro ao realizar login.');
+    } finally {
       setIsLoading(false);
-    }, 600);
+    }
   };
 
   const handleGoogleLogin = async () => {
@@ -62,10 +136,12 @@ export const LoginView: React.FC = () => {
 
       loginWithCustomUser({
         id: googleUser.uid,
-        name: googleUser.displayName || (selectedRole === 'admin' ? 'Admin Google' : 'Funcionário Google'),
-        email: googleUser.email || 'usuario.google@credicontrol.com',
+        name: googleUser.displayName || (selectedRole === 'admin' ? 'Edinelson (Admin Google)' : 'Funcionário Google'),
+        email: googleUser.email || (selectedRole === 'admin' ? ADMIN_EMAIL : 'usuario.google@credicontrol.com'),
         role: selectedRole,
-        avatarUrl: googleUser.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+        avatarUrl:
+          googleUser.photoURL ||
+          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
       });
       setIsAuthenticated(true);
     } catch (err: any) {
@@ -73,10 +149,11 @@ export const LoginView: React.FC = () => {
       // Fallback for iframe preview environment where Google OAuth popup might be restricted
       loginWithCustomUser({
         id: `user_google_${Date.now()}`,
-        name: selectedRole === 'admin' ? 'Carlos Credor (Admin Google)' : 'Mariana Silva (Funcionária Google)',
-        email: 'usuario.google@credicontrol.com',
+        name: selectedRole === 'admin' ? 'Edinelson (Admin)' : 'Mariana Silva (Funcionária)',
+        email: selectedRole === 'admin' ? ADMIN_EMAIL : 'usuario.google@credicontrol.com',
         role: selectedRole,
-        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+        avatarUrl:
+          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
       });
       setIsAuthenticated(true);
     } finally {
@@ -85,16 +162,25 @@ export const LoginView: React.FC = () => {
   };
 
   const handleDemoLogin = (role: UserRole) => {
-    loginWithCustomUser({
-      id: role === 'admin' ? 'user_admin' : 'user_employee',
-      name: role === 'admin' ? 'Carlos Credor (Admin)' : 'Mariana Silva (Cobradora)',
-      email: role === 'admin' ? 'admin@credicontrol.com' : 'mariana@credicontrol.com',
-      role: role,
-      avatarUrl:
-        role === 'admin'
-          ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80'
-          : 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
-    });
+    if (role === 'admin') {
+      loginWithCustomUser({
+        id: 'user_admin',
+        name: 'Edinelson (Admin)',
+        email: ADMIN_EMAIL,
+        role: 'admin',
+        avatarUrl:
+          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+      });
+    } else {
+      loginWithCustomUser({
+        id: 'user_employee',
+        name: 'Mariana Silva (Cobradora)',
+        email: 'mariana@credicontrol.com',
+        role: 'employee',
+        avatarUrl:
+          'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
+      });
+    }
     setIsAuthenticated(true);
   };
 
@@ -122,7 +208,7 @@ export const LoginView: React.FC = () => {
         <div className="bg-neutral-900 p-1.5 rounded-2xl border border-neutral-800 grid grid-cols-2 gap-1.5">
           <button
             type="button"
-            onClick={() => setSelectedRole('admin')}
+            onClick={() => handleRoleChange('admin')}
             className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
               selectedRole === 'admin'
                 ? 'bg-[#8BCF00] text-black shadow-md'
@@ -135,7 +221,7 @@ export const LoginView: React.FC = () => {
 
           <button
             type="button"
-            onClick={() => setSelectedRole('employee')}
+            onClick={() => handleRoleChange('employee')}
             className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
               selectedRole === 'employee'
                 ? 'bg-[#8BCF00] text-black shadow-md'
@@ -146,6 +232,25 @@ export const LoginView: React.FC = () => {
             <span>Funcionário</span>
           </button>
         </div>
+
+        {/* Admin Credentials Helper Badge */}
+        {selectedRole === 'admin' && (
+          <div className="p-3 bg-[#8BCF00]/10 border border-[#8BCF00]/30 rounded-2xl flex items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 text-neutral-200">
+              <Sparkles className="w-4 h-4 text-[#8BCF00] shrink-0" />
+              <span className="truncate">
+                Admin: <strong className="text-white">{ADMIN_EMAIL}</strong>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleFillAdminCredentials}
+              className="px-2.5 py-1 bg-[#8BCF00] text-black text-[11px] font-bold rounded-lg hover:bg-[#9DE000] transition-colors shrink-0 cursor-pointer shadow-xs"
+            >
+              Preencher
+            </button>
+          </div>
+        )}
 
         {/* Login Form */}
         <form onSubmit={handleEmailLogin} className="space-y-4">
@@ -166,7 +271,7 @@ export const LoginView: React.FC = () => {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder={selectedRole === 'admin' ? 'admin@credicontrol.com' : 'funcionario@credicontrol.com'}
+                placeholder={selectedRole === 'admin' ? ADMIN_EMAIL : 'funcionario@credicontrol.com'}
                 className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-white placeholder-neutral-600 outline-none transition-all"
               />
             </div>
@@ -186,12 +291,21 @@ export const LoginView: React.FC = () => {
             <div className="relative">
               <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-white placeholder-neutral-600 outline-none transition-all"
+                className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder-neutral-600 outline-none transition-all"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                tabIndex={-1}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 cursor-pointer"
+                title={showPassword ? 'Ocultar senha' : 'Ver senha'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
           </div>
 
@@ -252,14 +366,14 @@ export const LoginView: React.FC = () => {
               onClick={() => handleDemoLogin('admin')}
               className="bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white p-2 rounded-xl text-xs font-semibold border border-neutral-800 transition-all text-center cursor-pointer flex items-center justify-center gap-1"
             >
-              <Check className="w-3.5 h-3.5 text-[#8BCF00]" /> Demo Admin
+              <Check className="w-3.5 h-3.5 text-[#8BCF00]" /> Admin (Edinelson)
             </button>
             <button
               type="button"
               onClick={() => handleDemoLogin('employee')}
               className="bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white p-2 rounded-xl text-xs font-semibold border border-neutral-800 transition-all text-center cursor-pointer flex items-center justify-center gap-1"
             >
-              <Check className="w-3.5 h-3.5 text-[#8BCF00]" /> Demo Operador
+              <Check className="w-3.5 h-3.5 text-[#8BCF00]" /> Operador (Mariana)
             </button>
           </div>
         </div>

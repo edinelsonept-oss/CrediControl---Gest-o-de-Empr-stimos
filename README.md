@@ -270,8 +270,10 @@ Integração nativa via API Web do WhatsApp (`https://api.whatsapp.com/send`) co
   - Exportação de contratos e parcelas com cálculo de multas acumuladas.
   - Resumo financeiro consolidado com indicadores gerenciais e lucro realizado.
 
-### 6.8 Perfis de Acesso (RBAC) e Segurança
+### 6.8 Perfis de Acesso (RBAC) e Credenciais
 - **Administrador:** Acesso irrestrito a todos os módulos, alteração de taxas de juros, exclusão de registros e alteração de parâmetros.
+  - **E-mail:** `edinelsonept@gmail.com`
+  - **Senha:** `@Coelho60`
 - **Operador / Funcionário:** Registro de pagamentos, inclusão de clientes e novos empréstimos, com proteção contra exclusões acidentais e alteração de regras do negócio.
 - Alternância dinâmica entre perfis para testes e operações em campo.
 

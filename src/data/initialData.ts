@@ -4,8 +4,8 @@ import { getTodayIso, getDateOffsetIso } from '../utils/calculations';
 export const INITIAL_USER_PROFILES: UserProfile[] = [
   {
     id: 'user_admin',
-    name: 'Carlos Credor (Admin)',
-    email: 'admin@credicontrol.com',
+    name: 'Edinelson (Admin)',
+    email: 'edinelsonept@gmail.com',
     role: 'admin',
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
   },
