@@ -14,6 +14,7 @@ import { MapView } from './components/MapView';
 import { ReportsView } from './components/ReportsView';
 import { SettingsView } from './components/SettingsView';
 import { LoginView } from './components/LoginView';
+import { FirebaseSyncBanner } from './components/FirebaseSyncBanner';
 import { Client } from './types';
 
 function AppContent() {
@@ -31,6 +32,9 @@ function AppContent() {
     isPaymentModalOpen,
     setIsPaymentModalOpen,
     activeLoanForPayment,
+    isFirebasePermissionMissing,
+    dismissFirebaseWarning,
+    retryFirebaseConnection,
   } = useApp();
 
   const [isMobileOpen, setIsMobileOpen] = useState(false);
@@ -64,6 +68,13 @@ function AppContent() {
         <Header setIsMobileOpen={setIsMobileOpen} />
 
         <main className="flex-1 p-4 lg:p-8 max-w-7xl w-full mx-auto">
+          {isFirebasePermissionMissing && (
+            <FirebaseSyncBanner
+              onDismiss={dismissFirebaseWarning}
+              onRetryConnection={retryFirebaseConnection}
+            />
+          )}
+
           {activeTab === 'dashboard' && <Dashboard />}
 
           {activeTab === 'clients' && (

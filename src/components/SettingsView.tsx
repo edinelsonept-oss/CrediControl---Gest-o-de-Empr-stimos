@@ -221,6 +221,56 @@ export const SettingsView: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Firebase Sync & Rules Information */}
+        <div className="bg-[#1C1C1C] border border-neutral-800 p-6 rounded-3xl shadow-xl space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-bold text-white font-['Outfit'] flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-[#8BCF00]" /> Sincronização Firebase (credicontrol-8315e)
+            </h3>
+            <span className="text-xs font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-full font-semibold">
+              Armazenamento Local Ativo
+            </span>
+          </div>
+          <p className="text-xs text-neutral-400 leading-relaxed">
+            Seus dados são salvos localmente e replicados na nuvem. Se o Firebase Console indicar erro de permissão (Missing or insufficient permissions), publique as regras no painel do Firebase:
+          </p>
+          <div className="bg-neutral-950 p-3.5 rounded-2xl border border-neutral-800 text-xs font-mono text-neutral-300 space-y-2">
+            <div className="text-[11px] text-[#8BCF00] font-bold uppercase tracking-wider">
+              Regras do Cloud Firestore:
+            </div>
+            <pre className="text-neutral-300 overflow-x-auto leading-relaxed">
+{`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}`}
+            </pre>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(`rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if true;\n    }\n  }\n}`);
+                alert('Regras do Firestore copiadas com sucesso!');
+              }}
+              className="bg-[#8BCF00] hover:bg-[#9DE000] text-black font-bold text-xs px-3.5 py-2 rounded-xl transition-colors cursor-pointer"
+            >
+              Copiar Regras do Firestore
+            </button>
+            <a
+              href="https://console.firebase.google.com/project/credicontrol-8315e/firestore/rules"
+              target="_blank"
+              rel="noreferrer"
+              className="bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold px-3.5 py-2 rounded-xl transition-colors inline-flex items-center gap-1.5"
+            >
+              Abrir Console do Firestore
+            </a>
+          </div>
+        </div>
       </form>
     </div>
   );

@@ -6,8 +6,17 @@ import {
   deleteDoc,
   onSnapshot,
 } from 'firebase/firestore';
+import { ref as rtdbRef, set as rtdbSet, remove as rtdbRemove, onValue } from 'firebase/database';
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
+import {
+  db,
+  rtdb,
+  auth,
+  handleFirestoreError,
+  OperationType,
+  onPermissionError,
+  clearPermissionError,
+} from '../lib/firebase';
 import {
   Client,
   Loan,
@@ -70,6 +79,11 @@ interface AppContextType {
   
   // Alerts / Notifications
   notifications: NotificationAlert[];
+
+  // Firebase Sync State
+  isFirebasePermissionMissing: boolean;
+  dismissFirebaseWarning: () => void;
+  retryFirebaseConnection: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -167,63 +181,178 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState<boolean>(false);
   const [activeLoanForPayment, setActiveLoanForPayment] = useState<Loan | null>(null);
 
-  // Synchronize Firestore collections with app state after auth initialized
+  const [isFirebasePermissionMissing, setIsFirebasePermissionMissing] = useState<boolean>(false);
+  const [retryCounter, setRetryCounter] = useState<number>(0);
+
+  const dismissFirebaseWarning = () => {
+    setIsFirebasePermissionMissing(false);
+  };
+
+  const retryFirebaseConnection = () => {
+    clearPermissionError();
+    setIsFirebasePermissionMissing(false);
+    setRetryCounter((prev) => prev + 1);
+  };
+
+  // Listen for permission error broadcasts from firebase.ts
+  useEffect(() => {
+    const unsub = onPermissionError(() => {
+      setIsFirebasePermissionMissing(true);
+    });
+    return () => unsub();
+  }, []);
+
+  // Synchronize Firestore & Realtime Database with app state
   useEffect(() => {
     let unsubClients: (() => void) | null = null;
     let unsubLoans: (() => void) | null = null;
     let unsubSettings: (() => void) | null = null;
 
+    // 1. Realtime Database listeners (if databaseURL is configured)
+    if (rtdb) {
+      try {
+        const rtdbClientsRef = rtdbRef(rtdb, 'clients');
+        onValue(
+          rtdbClientsRef,
+          (snapshot) => {
+            const val = snapshot.val();
+            if (val) {
+              const loaded: Client[] = Array.isArray(val)
+                ? val.filter(Boolean)
+                : Object.values(val);
+              if (loaded.length > 0) {
+                setClients(loaded);
+              }
+            }
+          },
+          (err) => {
+            console.warn('Realtime Database clients sync note:', err.message);
+          }
+        );
+
+        const rtdbLoansRef = rtdbRef(rtdb, 'loans');
+        onValue(
+          rtdbLoansRef,
+          (snapshot) => {
+            const val = snapshot.val();
+            if (val) {
+              const loaded: Loan[] = Array.isArray(val)
+                ? val.filter(Boolean)
+                : Object.values(val);
+              if (loaded.length > 0) {
+                setLoans(loaded);
+              }
+            }
+          },
+          (err) => {
+            console.warn('Realtime Database loans sync note:', err.message);
+          }
+        );
+
+        const rtdbSettingsRef = rtdbRef(rtdb, 'settings');
+        onValue(
+          rtdbSettingsRef,
+          (snapshot) => {
+            const val = snapshot.val();
+            if (val && typeof val === 'object') {
+              setSettings((prev) => ({ ...prev, ...val }));
+            }
+          },
+          (err) => {
+            console.warn('Realtime Database settings sync note:', err.message);
+          }
+        );
+      } catch (err) {
+        console.warn('Realtime Database initialization note:', err);
+      }
+    }
+
+    // 2. Cloud Firestore listeners (with auth state check)
     const unsubAuth = onAuthStateChanged(auth, (user) => {
       if (!user) {
         signInAnonymously(auth).catch((err) => {
-          console.warn('Anonymous auth signin error:', err);
+          console.warn('Anonymous auth signin note:', err);
         });
+        return;
+      }
+
+      if (!db) {
         return;
       }
 
       // User authenticated, attach listeners
       if (!unsubClients) {
-        unsubClients = onSnapshot(
-          collection(db, 'clients'),
-          (snapshot) => {
-            if (!snapshot.empty) {
-              const loadedClients: Client[] = snapshot.docs.map((d) => d.data() as Client);
-              setClients(loadedClients);
+        try {
+          unsubClients = onSnapshot(
+            collection(db, 'clients'),
+            (snapshot) => {
+              if (!snapshot.empty) {
+                const loadedClients: Client[] = snapshot.docs.map((d) => d.data() as Client);
+                setClients(loadedClients);
+                setIsFirebasePermissionMissing(false);
+              }
+            },
+            (error) => {
+              handleFirestoreError(error, OperationType.LIST, 'clients');
+              setIsFirebasePermissionMissing(true);
+              if (unsubClients) {
+                try { unsubClients(); } catch (_) {}
+                unsubClients = null;
+              }
             }
-          },
-          (error) => {
-            handleFirestoreError(error, OperationType.LIST, 'clients');
-          }
-        );
+          );
+        } catch (err) {
+          console.warn('Clients snapshot listener attach error:', err);
+        }
       }
 
       if (!unsubLoans) {
-        unsubLoans = onSnapshot(
-          collection(db, 'loans'),
-          (snapshot) => {
-            if (!snapshot.empty) {
-              const loadedLoans: Loan[] = snapshot.docs.map((d) => d.data() as Loan);
-              setLoans(loadedLoans);
+        try {
+          unsubLoans = onSnapshot(
+            collection(db, 'loans'),
+            (snapshot) => {
+              if (!snapshot.empty) {
+                const loadedLoans: Loan[] = snapshot.docs.map((d) => d.data() as Loan);
+                setLoans(loadedLoans);
+                setIsFirebasePermissionMissing(false);
+              }
+            },
+            (error) => {
+              handleFirestoreError(error, OperationType.LIST, 'loans');
+              setIsFirebasePermissionMissing(true);
+              if (unsubLoans) {
+                try { unsubLoans(); } catch (_) {}
+                unsubLoans = null;
+              }
             }
-          },
-          (error) => {
-            handleFirestoreError(error, OperationType.LIST, 'loans');
-          }
-        );
+          );
+        } catch (err) {
+          console.warn('Loans snapshot listener attach error:', err);
+        }
       }
 
       if (!unsubSettings) {
-        unsubSettings = onSnapshot(
-          doc(db, 'settings', 'config'),
-          (snapshot) => {
-            if (snapshot.exists()) {
-              setSettings(snapshot.data() as SystemSettings);
+        try {
+          unsubSettings = onSnapshot(
+            doc(db, 'settings', 'config'),
+            (snapshot) => {
+              if (snapshot.exists()) {
+                setSettings(snapshot.data() as SystemSettings);
+                setIsFirebasePermissionMissing(false);
+              }
+            },
+            (error) => {
+              handleFirestoreError(error, OperationType.GET, 'settings/config');
+              setIsFirebasePermissionMissing(true);
+              if (unsubSettings) {
+                try { unsubSettings(); } catch (_) {}
+                unsubSettings = null;
+              }
             }
-          },
-          (error) => {
-            handleFirestoreError(error, OperationType.GET, 'settings/config');
-          }
-        );
+          );
+        } catch (err) {
+          console.warn('Settings snapshot listener attach error:', err);
+        }
       }
     });
 
@@ -233,7 +362,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (unsubLoans) unsubLoans();
       if (unsubSettings) unsubSettings();
     };
-  }, []);
+  }, [retryCounter]);
 
   // Save to local storage on change
   useEffect(() => {
@@ -328,9 +457,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: getTodayIso(),
     };
     setClients((prev) => [newClient, ...prev]);
-    setDoc(doc(db, 'clients', newClient.id), newClient).catch((err) =>
-      handleFirestoreError(err, OperationType.WRITE, `clients/${newClient.id}`)
-    );
+    if (db) {
+      setDoc(doc(db, 'clients', newClient.id), newClient).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `clients/${newClient.id}`)
+      );
+    }
+    if (rtdb) {
+      try {
+        rtdbSet(rtdbRef(rtdb, `clients/${newClient.id}`), newClient).catch(() => {});
+      } catch {}
+    }
     return newClient;
   };
 
@@ -339,9 +475,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const updated = prev.map((c) => (c.id === id ? { ...c, ...clientData } : c));
       const target = updated.find((c) => c.id === id);
       if (target) {
-        setDoc(doc(db, 'clients', id), target).catch((err) =>
-          handleFirestoreError(err, OperationType.WRITE, `clients/${id}`)
-        );
+        if (db) {
+          setDoc(doc(db, 'clients', id), target).catch((err) =>
+            handleFirestoreError(err, OperationType.WRITE, `clients/${id}`)
+          );
+        }
+        if (rtdb) {
+          try {
+            rtdbSet(rtdbRef(rtdb, `clients/${id}`), target).catch(() => {});
+          } catch {}
+        }
       }
       return updated;
     });
@@ -352,16 +495,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteClient = (id: string) => {
     setClients((prev) => prev.filter((c) => c.id !== id));
-    deleteDoc(doc(db, 'clients', id)).catch((err) =>
-      handleFirestoreError(err, OperationType.DELETE, `clients/${id}`)
-    );
+    if (db) {
+      deleteDoc(doc(db, 'clients', id)).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `clients/${id}`)
+      );
+    }
+    if (rtdb) {
+      try {
+        rtdbRemove(rtdbRef(rtdb, `clients/${id}`)).catch(() => {});
+      } catch {}
+    }
     setLoans((prev) => {
       const remaining = prev.filter((l) => l.clientId !== id);
       const deleted = prev.filter((l) => l.clientId === id);
       deleted.forEach((l) => {
-        deleteDoc(doc(db, 'loans', l.id)).catch((err) =>
-          handleFirestoreError(err, OperationType.DELETE, `loans/${l.id}`)
-        );
+        if (db) {
+          deleteDoc(doc(db, 'loans', l.id)).catch((err) =>
+            handleFirestoreError(err, OperationType.DELETE, `loans/${l.id}`)
+          );
+        }
+        if (rtdb) {
+          try {
+            rtdbRemove(rtdbRef(rtdb, `loans/${l.id}`)).catch(() => {});
+          } catch {}
+        }
       });
       return remaining;
     });
@@ -376,9 +533,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: getTodayIso(),
     };
     setLoans((prev) => [newLoan, ...prev]);
-    setDoc(doc(db, 'loans', newLoan.id), newLoan).catch((err) =>
-      handleFirestoreError(err, OperationType.WRITE, `loans/${newLoan.id}`)
-    );
+    if (db) {
+      setDoc(doc(db, 'loans', newLoan.id), newLoan).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `loans/${newLoan.id}`)
+      );
+    }
+    if (rtdb) {
+      try {
+        rtdbSet(rtdbRef(rtdb, `loans/${newLoan.id}`), newLoan).catch(() => {});
+      } catch {}
+    }
     return newLoan;
   };
 
@@ -387,9 +551,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const updated = prev.map((l) => (l.id === id ? { ...l, ...loanData } : l));
       const target = updated.find((l) => l.id === id);
       if (target) {
-        setDoc(doc(db, 'loans', id), target).catch((err) =>
-          handleFirestoreError(err, OperationType.WRITE, `loans/${id}`)
-        );
+        if (db) {
+          setDoc(doc(db, 'loans', id), target).catch((err) =>
+            handleFirestoreError(err, OperationType.WRITE, `loans/${id}`)
+          );
+        }
+        if (rtdb) {
+          try {
+            rtdbSet(rtdbRef(rtdb, `loans/${id}`), target).catch(() => {});
+          } catch {}
+        }
       }
       return updated;
     });
@@ -400,9 +571,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteLoan = (id: string) => {
     setLoans((prev) => prev.filter((l) => l.id !== id));
-    deleteDoc(doc(db, 'loans', id)).catch((err) =>
-      handleFirestoreError(err, OperationType.DELETE, `loans/${id}`)
-    );
+    if (db) {
+      deleteDoc(doc(db, 'loans', id)).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `loans/${id}`)
+      );
+    }
+    if (rtdb) {
+      try {
+        rtdbRemove(rtdbRef(rtdb, `loans/${id}`)).catch(() => {});
+      } catch {}
+    }
     if (selectedLoanDetail?.id === id) setSelectedLoanDetail(null);
   };
 
@@ -454,9 +632,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setLoans((prev) => prev.map((l) => (l.id === loanId ? updatedLoan : l)));
-    setDoc(doc(db, 'loans', loanId), updatedLoan).catch((err) =>
-      handleFirestoreError(err, OperationType.WRITE, `loans/${loanId}`)
-    );
+    if (db) {
+      setDoc(doc(db, 'loans', loanId), updatedLoan).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `loans/${loanId}`)
+      );
+    }
+    if (rtdb) {
+      try {
+        rtdbSet(rtdbRef(rtdb, `loans/${loanId}`), updatedLoan).catch(() => {});
+      } catch {}
+    }
     if (selectedLoanDetail && selectedLoanDetail.id === loanId) {
       setSelectedLoanDetail(updatedLoan);
     }
@@ -467,9 +652,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateSettings = (newSettings: Partial<SystemSettings>) => {
     setSettings((prev) => {
       const updated = { ...prev, ...newSettings };
-      setDoc(doc(db, 'settings', 'config'), updated).catch((err) =>
-        handleFirestoreError(err, OperationType.WRITE, 'settings/config')
-      );
+      if (db) {
+        setDoc(doc(db, 'settings', 'config'), updated).catch((err) =>
+          handleFirestoreError(err, OperationType.WRITE, 'settings/config')
+        );
+      }
+      if (rtdb) {
+        try {
+          rtdbSet(rtdbRef(rtdb, 'settings'), updated).catch(() => {});
+        } catch {}
+      }
       return updated;
     });
   };
@@ -524,6 +716,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateSettings,
         resetToSampleData,
         notifications,
+        isFirebasePermissionMissing,
+        dismissFirebaseWarning,
+        retryFirebaseConnection,
       }}
     >
       {children}
