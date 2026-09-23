@@ -37,6 +37,21 @@
         "companyName": { "type": "string" },
         "companyPhone": { "type": "string" }
       }
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Employee user account created by Administrator",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "roleTitle": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "email", "role", "status"]
     }
   },
   "firestore": {
@@ -47,6 +62,10 @@
     "loans": {
       "schema": { "$ref": "#/entities/Loan" },
       "description": "Collection of loan contracts"
+    },
+    "employees": {
+      "schema": { "$ref": "#/entities/Employee" },
+      "description": "Collection of employee users created by administrator"
     },
     "settings": {
       "schema": { "$ref": "#/entities/Settings" },

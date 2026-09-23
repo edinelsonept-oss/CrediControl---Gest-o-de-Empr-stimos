@@ -10,14 +10,23 @@ import {
   ShieldAlert,
   Download,
   Upload,
+  UserCheck,
+  UserPlus,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import {
+  parseAndFormatCurrencyInput,
+  formatCurrencyOnBlur,
+  parseAndFormatPercentageInput,
+} from '../utils/calculations';
 
 export const SettingsView: React.FC = () => {
-  const { settings, updateSettings, resetToSampleData, currentUser } = useApp();
+  const { settings, updateSettings, resetToSampleData, currentUser, employees, setActiveTab } = useApp();
 
   const [defaultInterestRate, setDefaultInterestRate] = useState<number>(settings.defaultInterestRate);
+  const [interestRateInputStr, setInterestRateInputStr] = useState<string>(String(settings.defaultInterestRate));
   const [defaultDailyFine, setDefaultDailyFine] = useState<number>(settings.defaultDailyFine);
+  const [dailyFineInputStr, setDailyFineInputStr] = useState<string>(formatCurrencyOnBlur(settings.defaultDailyFine));
   const [companyName, setCompanyName] = useState<string>(settings.companyName);
   const [companyPhone, setCompanyPhone] = useState<string>(settings.companyPhone);
   const [companyWhatsapp, setCompanyWhatsapp] = useState<string>(settings.companyWhatsapp);
@@ -25,6 +34,36 @@ export const SettingsView: React.FC = () => {
   const [companyCnpj, setCompanyCnpj] = useState<string>(settings.companyCnpj || '');
 
   const [savedSuccess, setSavedSuccess] = useState(false);
+
+  // Sync if settings change externally
+  React.useEffect(() => {
+    setDefaultInterestRate(settings.defaultInterestRate);
+    setInterestRateInputStr(String(settings.defaultInterestRate));
+    setDefaultDailyFine(settings.defaultDailyFine);
+    setDailyFineInputStr(formatCurrencyOnBlur(settings.defaultDailyFine));
+  }, [settings.defaultInterestRate, settings.defaultDailyFine]);
+
+  const handleInterestRateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value;
+    const { display, numeric } = parseAndFormatPercentageInput(rawVal);
+    setInterestRateInputStr(display);
+    setDefaultInterestRate(numeric);
+  };
+
+  const handleDailyFineChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value;
+    const { display, numeric } = parseAndFormatCurrencyInput(rawVal);
+    setDailyFineInputStr(display);
+    setDefaultDailyFine(numeric);
+  };
+
+  const handleDailyFineBlur = () => {
+    if (defaultDailyFine > 0) {
+      setDailyFineInputStr(formatCurrencyOnBlur(defaultDailyFine));
+    } else {
+      setDailyFineInputStr('0,00');
+    }
+  };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,12 +126,12 @@ export const SettingsView: React.FC = () => {
               <label className="block text-xs font-semibold text-neutral-300 mb-1">Taxa de Juros Padrão (%)</label>
               <div className="relative">
                 <input
-                  type="number"
-                  min="0"
-                  step="1"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0"
                   disabled={currentUser.role !== 'admin'}
-                  value={defaultInterestRate}
-                  onChange={(e) => setDefaultInterestRate(parseFloat(e.target.value) || 0)}
+                  value={interestRateInputStr}
+                  onChange={handleInterestRateChange}
                   className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl px-3.5 py-2.5 text-base font-extrabold text-[#8BCF00] outline-none disabled:opacity-50"
                 />
                 <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400 font-bold">%</span>
@@ -107,12 +146,13 @@ export const SettingsView: React.FC = () => {
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 font-bold">R$</span>
                 <input
-                  type="number"
-                  min="0"
-                  step="5"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
                   disabled={currentUser.role !== 'admin'}
-                  value={defaultDailyFine}
-                  onChange={(e) => setDefaultDailyFine(parseFloat(e.target.value) || 0)}
+                  value={dailyFineInputStr}
+                  onChange={handleDailyFineChange}
+                  onBlur={handleDailyFineBlur}
                   className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl pl-10 pr-4 py-2.5 text-base font-extrabold text-[#FF3B30] outline-none disabled:opacity-50"
                 />
               </div>
@@ -188,6 +228,35 @@ export const SettingsView: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Employee Accounts Management Block */}
+        {currentUser.role === 'admin' && (
+          <div className="bg-[#1C1C1C] border border-neutral-800 p-6 rounded-3xl shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-white font-['Outfit'] flex items-center gap-2">
+                  <UserCheck className="w-5 h-5 text-[#8BCF00]" /> Acessos & Logins dos Funcionários
+                </h3>
+                <p className="text-xs text-neutral-400 mt-1">
+                  O funcionário só consegue logar se você (Administrador) criar o usuário dele. Atualmente há{' '}
+                  <strong className="text-white">{employees.length} funcionário(s) cadastrado(s)</strong> (
+                  <span className="text-emerald-400 font-semibold">
+                    {employees.filter((e) => e.status === 'active').length} ativos
+                  </span>
+                  ).
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('employees')}
+                className="bg-[#8BCF00] hover:bg-[#9DE000] text-black font-bold text-xs px-4 py-2.5 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
+              >
+                <UserPlus className="w-4 h-4" /> Gerenciar Funcionários & Senhas
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Database & Backup Options */}
         <div className="bg-[#1C1C1C] border border-neutral-800 p-6 rounded-3xl shadow-xl space-y-4">

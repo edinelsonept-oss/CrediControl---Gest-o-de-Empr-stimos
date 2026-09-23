@@ -9,6 +9,9 @@ import {
   getDateOffsetIso,
   generateInstallmentSchedule,
   LOAN_PRESETS,
+  parseAndFormatCurrencyInput,
+  formatCurrencyOnBlur,
+  parseAndFormatPercentageInput,
 } from '../utils/calculations';
 import { SuccessModal } from './SuccessModal';
 
@@ -22,12 +25,15 @@ export const LoanFormModal: React.FC<LoanFormModalProps> = ({ isOpen, onClose })
 
   const [selectedClientId, setSelectedClientId] = useState<string>('');
   const [principalAmount, setPrincipalAmount] = useState<number>(1000);
+  const [principalInputStr, setPrincipalInputStr] = useState<string>('1.000,00');
   const [interestRatePercent, setInterestRatePercent] = useState<number>(settings.defaultInterestRate || 30);
+  const [interestRateInputStr, setInterestRateInputStr] = useState<string>(String(settings.defaultInterestRate || 30));
   const [loanDate, setLoanDate] = useState<string>(getTodayIso());
   const [dueDate, setDueDate] = useState<string>(getDateOffsetIso(30));
   const [paymentFrequency, setPaymentFrequency] = useState<PaymentFrequency>('pagamento_unico_30');
   const [installmentsCount, setInstallmentsCount] = useState<number>(1);
   const [dailyFineAmount, setDailyFineAmount] = useState<number>(settings.defaultDailyFine || 20);
+  const [dailyFineInputStr, setDailyFineInputStr] = useState<string>('20,00');
   const [notes, setNotes] = useState<string>('');
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState<boolean>(false);
 
@@ -38,11 +44,57 @@ export const LoanFormModal: React.FC<LoanFormModalProps> = ({ isOpen, onClose })
     }
   }, [clients, selectedClientId]);
 
-  // Sync settings defaults
+  // Sync settings defaults and reset on open
   useEffect(() => {
-    setInterestRatePercent(settings.defaultInterestRate || 30);
-    setDailyFineAmount(settings.defaultDailyFine || 20);
+    if (isOpen) {
+      const defaultFine = settings.defaultDailyFine || 20;
+      const defaultRate = settings.defaultInterestRate || 30;
+      setInterestRatePercent(defaultRate);
+      setInterestRateInputStr(String(defaultRate));
+      setDailyFineAmount(defaultFine);
+      setDailyFineInputStr(formatCurrencyOnBlur(defaultFine));
+      setPrincipalAmount(1000);
+      setPrincipalInputStr(formatCurrencyOnBlur(1000));
+    }
   }, [settings, isOpen]);
+
+  // Handle principal amount change as user types
+  const handlePrincipalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value;
+    const { display, numeric } = parseAndFormatCurrencyInput(rawVal);
+    setPrincipalInputStr(display);
+    setPrincipalAmount(numeric);
+  };
+
+  const handlePrincipalBlur = () => {
+    if (principalAmount > 0) {
+      setPrincipalInputStr(formatCurrencyOnBlur(principalAmount));
+    } else {
+      setPrincipalInputStr('');
+    }
+  };
+
+  const handleInterestRateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value;
+    const { display, numeric } = parseAndFormatPercentageInput(rawVal);
+    setInterestRateInputStr(display);
+    setInterestRatePercent(numeric);
+  };
+
+  const handleDailyFineChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value;
+    const { display, numeric } = parseAndFormatCurrencyInput(rawVal);
+    setDailyFineInputStr(display);
+    setDailyFineAmount(numeric);
+  };
+
+  const handleDailyFineBlur = () => {
+    if (dailyFineAmount > 0) {
+      setDailyFineInputStr(formatCurrencyOnBlur(dailyFineAmount));
+    } else {
+      setDailyFineInputStr('0,00');
+    }
+  };
 
   // Handle frequency changes
   const handleFrequencyChange = (freq: PaymentFrequency) => {
@@ -179,7 +231,10 @@ export const LoanFormModal: React.FC<LoanFormModalProps> = ({ isOpen, onClose })
                 <button
                   key={preset.principal}
                   type="button"
-                  onClick={() => setPrincipalAmount(preset.principal)}
+                  onClick={() => {
+                    setPrincipalAmount(preset.principal);
+                    setPrincipalInputStr(formatCurrencyOnBlur(preset.principal));
+                  }}
                   className={`p-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
                     principalAmount === preset.principal
                       ? 'bg-[#8BCF00] text-black border-[#8BCF00] shadow-sm'
@@ -199,12 +254,13 @@ export const LoanFormModal: React.FC<LoanFormModalProps> = ({ isOpen, onClose })
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 text-sm font-bold">R$</span>
                 <input
-                  type="number"
-                  min="1"
-                  step="10"
+                  type="text"
+                  inputMode="decimal"
                   required
-                  value={principalAmount}
-                  onChange={(e) => setPrincipalAmount(parseFloat(e.target.value) || 0)}
+                  placeholder="0,00"
+                  value={principalInputStr}
+                  onChange={handlePrincipalChange}
+                  onBlur={handlePrincipalBlur}
                   className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl pl-10 pr-4 py-2.5 text-base font-extrabold text-white outline-none"
                 />
               </div>
@@ -214,12 +270,12 @@ export const LoanFormModal: React.FC<LoanFormModalProps> = ({ isOpen, onClose })
               <label className="block text-xs font-semibold text-neutral-300 mb-1">Taxa de Juros (%) *</label>
               <div className="relative">
                 <input
-                  type="number"
-                  min="0"
-                  step="1"
+                  type="text"
+                  inputMode="decimal"
                   required
-                  value={interestRatePercent}
-                  onChange={(e) => setInterestRatePercent(parseFloat(e.target.value) || 0)}
+                  placeholder="0"
+                  value={interestRateInputStr}
+                  onChange={handleInterestRateChange}
                   className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl px-3.5 py-2.5 text-base font-extrabold text-[#8BCF00] outline-none"
                 />
                 <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400 text-sm font-bold">%</span>
@@ -298,15 +354,19 @@ export const LoanFormModal: React.FC<LoanFormModalProps> = ({ isOpen, onClose })
 
             <div>
               <label className="block text-xs font-semibold text-neutral-300 mb-1">Multa Diária por Atraso (R$/dia)</label>
-              <input
-                type="number"
-                min="0"
-                step="5"
-                value={dailyFineAmount}
-                onChange={(e) => setDailyFineAmount(parseFloat(e.target.value) || 0)}
-                className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl px-3.5 py-2.5 text-sm text-[#FF3B30] font-bold outline-none"
-              />
-              <span className="text-[10px] text-neutral-400">Padrão: R$ 20,00 por dia após o vencimento</span>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 text-sm font-bold">R$</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={dailyFineInputStr}
+                  onChange={handleDailyFineChange}
+                  onBlur={handleDailyFineBlur}
+                  className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl pl-10 pr-4 py-2.5 text-sm text-[#FF3B30] font-bold outline-none"
+                />
+              </div>
+              <span className="text-[10px] text-neutral-400 mt-1 block">Padrão: R$ 20,00 por dia após o vencimento</span>
             </div>
           </div>
 

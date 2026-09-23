@@ -22,6 +22,7 @@ import {
   Loan,
   SystemSettings,
   UserProfile,
+  EmployeeUser,
   FilterStatus,
   PaymentRecord,
   NotificationAlert,
@@ -31,6 +32,7 @@ import {
   INITIAL_LOANS,
   INITIAL_SETTINGS,
   INITIAL_USER_PROFILES,
+  INITIAL_EMPLOYEES,
 } from '../data/initialData';
 import { getTodayIso, getDateOffsetIso, getLoanFinancialSummary } from '../utils/calculations';
 
@@ -63,6 +65,15 @@ interface AppContextType {
   setIsAuthenticated: (authenticated: boolean) => void;
   loginWithCustomUser: (user: UserProfile) => void;
   logout: () => void;
+
+  // Employees Management (Created and controlled by Admin)
+  employees: EmployeeUser[];
+  addEmployee: (employeeData: Omit<EmployeeUser, 'id' | 'createdAt' | 'createdByName'>) => EmployeeUser;
+  updateEmployee: (id: string, employeeData: Partial<EmployeeUser>) => void;
+  deleteEmployee: (id: string) => void;
+  toggleEmployeeStatus: (id: string) => void;
+  authenticateEmployee: (email: string, password: string) => { success: boolean; message?: string; user?: UserProfile };
+  isEmployeeEmailAllowed: (email: string) => { allowed: boolean; employee?: EmployeeUser; message?: string };
 
   // Actions
   setCurrentUserRole: (role: 'admin' | 'employee') => void;
@@ -131,6 +142,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [loans, setLoans] = useState<Loan[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_loans`);
     return saved ? JSON.parse(saved) : INITIAL_LOANS;
+  });
+
+  const [employees, setEmployees] = useState<EmployeeUser[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_employees`);
+    if (!saved) return INITIAL_EMPLOYEES;
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return INITIAL_EMPLOYEES;
+    }
   });
 
   const [settings, setSettings] = useState<SystemSettings>(() => {
@@ -206,6 +227,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     let unsubClients: (() => void) | null = null;
     let unsubLoans: (() => void) | null = null;
+    let unsubEmployees: (() => void) | null = null;
     let unsubSettings: (() => void) | null = null;
 
     // 1. Realtime Database listeners (if databaseURL is configured)
@@ -246,6 +268,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           },
           (err) => {
             console.warn('Realtime Database loans sync note:', err.message);
+          }
+        );
+
+        const rtdbEmployeesRef = rtdbRef(rtdb, 'employees');
+        onValue(
+          rtdbEmployeesRef,
+          (snapshot) => {
+            const val = snapshot.val();
+            if (val) {
+              const loaded: EmployeeUser[] = Array.isArray(val)
+                ? val.filter(Boolean)
+                : Object.values(val);
+              if (loaded.length > 0) {
+                setEmployees(loaded);
+              }
+            }
+          },
+          (err) => {
+            console.warn('Realtime Database employees sync note:', err.message);
           }
         );
 
@@ -331,6 +372,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
 
+      if (!unsubEmployees) {
+        try {
+          unsubEmployees = onSnapshot(
+            collection(db, 'employees'),
+            (snapshot) => {
+              if (!snapshot.empty) {
+                const loadedEmployees: EmployeeUser[] = snapshot.docs.map((d) => d.data() as EmployeeUser);
+                setEmployees(loadedEmployees);
+                setIsFirebasePermissionMissing(false);
+              }
+            },
+            (error) => {
+              handleFirestoreError(error, OperationType.LIST, 'employees');
+              setIsFirebasePermissionMissing(true);
+              if (unsubEmployees) {
+                try { unsubEmployees(); } catch (_) {}
+                unsubEmployees = null;
+              }
+            }
+          );
+        } catch (err) {
+          console.warn('Employees snapshot listener attach error:', err);
+        }
+      }
+
       if (!unsubSettings) {
         try {
           unsubSettings = onSnapshot(
@@ -360,6 +426,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubAuth();
       if (unsubClients) unsubClients();
       if (unsubLoans) unsubLoans();
+      if (unsubEmployees) unsubEmployees();
       if (unsubSettings) unsubSettings();
     };
   }, [retryCounter]);
@@ -372,6 +439,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_KEY}_loans`, JSON.stringify(loans));
   }, [loans]);
+
+  useEffect(() => {
+    localStorage.setItem(`${STORAGE_KEY}_employees`, JSON.stringify(employees));
+  }, [employees]);
 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_KEY}_settings`, JSON.stringify(settings));
@@ -666,13 +737,170 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  // Employee Management (Created by Admin)
+  const addEmployee = (
+    employeeData: Omit<EmployeeUser, 'id' | 'createdAt' | 'createdByName'>
+  ): EmployeeUser => {
+    const newEmployee: EmployeeUser = {
+      ...employeeData,
+      id: `emp_${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      createdByName: currentUser.name || 'Edinelson (Admin)',
+    };
+
+    setEmployees((prev) => [newEmployee, ...prev]);
+
+    if (db) {
+      setDoc(doc(db, 'employees', newEmployee.id), newEmployee).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `employees/${newEmployee.id}`)
+      );
+    }
+    if (rtdb) {
+      try {
+        rtdbSet(rtdbRef(rtdb, `employees/${newEmployee.id}`), newEmployee).catch(() => {});
+      } catch {}
+    }
+
+    return newEmployee;
+  };
+
+  const updateEmployee = (id: string, employeeData: Partial<EmployeeUser>) => {
+    setEmployees((prev) => {
+      const updated = prev.map((e) => (e.id === id ? { ...e, ...employeeData } : e));
+      const target = updated.find((e) => e.id === id);
+      if (target) {
+        if (db) {
+          setDoc(doc(db, 'employees', id), target).catch((err) =>
+            handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
+          );
+        }
+        if (rtdb) {
+          try {
+            rtdbSet(rtdbRef(rtdb, `employees/${id}`), target).catch(() => {});
+          } catch {}
+        }
+      }
+      return updated;
+    });
+  };
+
+  const deleteEmployee = (id: string) => {
+    setEmployees((prev) => prev.filter((e) => e.id !== id));
+    if (db) {
+      deleteDoc(doc(db, 'employees', id)).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `employees/${id}`)
+      );
+    }
+    if (rtdb) {
+      try {
+        rtdbRemove(rtdbRef(rtdb, `employees/${id}`)).catch(() => {});
+      } catch {}
+    }
+  };
+
+  const toggleEmployeeStatus = (id: string) => {
+    setEmployees((prev) => {
+      const updated = prev.map((e) => {
+        if (e.id === id) {
+          return { ...e, status: e.status === 'active' ? ('inactive' as const) : ('active' as const) };
+        }
+        return e;
+      });
+      const target = updated.find((e) => e.id === id);
+      if (target) {
+        if (db) {
+          setDoc(doc(db, 'employees', id), target).catch((err) =>
+            handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
+          );
+        }
+        if (rtdb) {
+          try {
+            rtdbSet(rtdbRef(rtdb, `employees/${id}`), target).catch(() => {});
+          } catch {}
+        }
+      }
+      return updated;
+    });
+  };
+
+  const authenticateEmployee = (
+    inputEmail: string,
+    inputPassword: string
+  ): { success: boolean; message?: string; user?: UserProfile } => {
+    const cleanEmail = inputEmail.trim().toLowerCase();
+    const cleanPass = inputPassword.trim();
+
+    const employee = employees.find((e) => e.email.trim().toLowerCase() === cleanEmail);
+
+    if (!employee) {
+      return {
+        success: false,
+        message: 'Acesso negado: Este e-mail de funcionário não foi cadastrado pelo administrador. Solicite que o administrador crie seu login no sistema.',
+      };
+    }
+
+    if (employee.status === 'inactive') {
+      return {
+        success: false,
+        message: 'Acesso bloqueado: Este usuário de funcionário está inativo ou foi desativado pelo administrador.',
+      };
+    }
+
+    if (employee.password !== cleanPass) {
+      return {
+        success: false,
+        message: 'Senha incorreta para este funcionário.',
+      };
+    }
+
+    const userProfile: UserProfile = {
+      id: employee.id,
+      name: employee.name,
+      email: employee.email,
+      role: 'employee',
+      avatarUrl: employee.avatarUrl || 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
+      roleTitle: employee.roleTitle,
+    };
+
+    return {
+      success: true,
+      user: userProfile,
+    };
+  };
+
+  const isEmployeeEmailAllowed = (
+    emailToCheck: string
+  ): { allowed: boolean; employee?: EmployeeUser; message?: string } => {
+    const cleanEmail = emailToCheck.trim().toLowerCase();
+    const employee = employees.find((e) => e.email.trim().toLowerCase() === cleanEmail);
+
+    if (!employee) {
+      return {
+        allowed: false,
+        message: 'Acesso não autorizado: O e-mail não possui cadastro de funcionário criado pelo administrador.',
+      };
+    }
+
+    if (employee.status === 'inactive') {
+      return {
+        allowed: false,
+        employee,
+        message: 'Acesso bloqueado: O cadastro deste funcionário foi inativado pelo administrador.',
+      };
+    }
+
+    return { allowed: true, employee };
+  };
+
   const resetToSampleData = () => {
     setClients(INITIAL_CLIENTS);
     setLoans(INITIAL_LOANS);
     setSettings(INITIAL_SETTINGS);
+    setEmployees(INITIAL_EMPLOYEES);
     localStorage.removeItem(`${STORAGE_KEY}_clients`);
     localStorage.removeItem(`${STORAGE_KEY}_loans`);
     localStorage.removeItem(`${STORAGE_KEY}_settings`);
+    localStorage.removeItem(`${STORAGE_KEY}_employees`);
   };
 
   return (
@@ -715,6 +943,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         registerPayment,
         updateSettings,
         resetToSampleData,
+        employees,
+        addEmployee,
+        updateEmployee,
+        deleteEmployee,
+        toggleEmployeeStatus,
+        authenticateEmployee,
+        isEmployeeEmailAllowed,
         notifications,
         isFirebasePermissionMissing,
         dismissFirebaseWarning,

@@ -30,7 +30,7 @@ import {
   CartesianGrid,
 } from 'recharts';
 import { useApp } from '../context/AppContext';
-import { formatCurrency, formatDate, getTodayIso, getDateOffsetIso, getLoanFinancialSummary } from '../utils/calculations';
+import { formatCurrency, formatDate, getTodayIso, getDateOffsetIso, getLoanFinancialSummary, getMonthlyFinancialData } from '../utils/calculations';
 import { generateWhatsAppMessage, openWhatsAppChat } from '../utils/whatsapp';
 
 export const Dashboard: React.FC = () => {
@@ -95,16 +95,8 @@ export const Dashboard: React.FC = () => {
   activeClientsCount = activeClientIdsSet.size;
   overdueClientsCount = overdueClientIdsSet.size;
 
-  // Chart Data calculations
-  const monthlyRevenueData = [
-    { name: 'Fev', empréstimos: 4500, recebido: 3800, lucro: 1100 },
-    { name: 'Mar', empréstimos: 6200, recebido: 5100, lucro: 1550 },
-    { name: 'Abr', empréstimos: 5800, recebido: 6300, lucro: 1450 },
-    { name: 'Mai', empréstimos: 7500, recebido: 7200, lucro: 1880 },
-    { name: 'Jun', empréstimos: 8900, recebido: 8400, lucro: 2220 },
-    { name: 'Jul', empréstimos: 10500, recebido: 9800, lucro: 2650 },
-    { name: 'Ago', empréstimos: totalLoaned, recebido: totalLoaned - totalToReceive, lucro: totalProfitForecast },
-  ];
+  // Chart Data calculations: 100% dynamic from real loan & payment records
+  const monthlyRevenueData = getMonthlyFinancialData(loans, 7, today);
 
   const statusPieData = [
     { name: 'Em dia', value: loans.filter((l) => getLoanFinancialSummary(l, today, settings.defaultDailyFine).status === 'em_dia' || !getLoanFinancialSummary(l, today, settings.defaultDailyFine).isOverdue && !getLoanFinancialSummary(l, today, settings.defaultDailyFine).isPaid).length, color: '#8BCF00' },
@@ -277,11 +269,11 @@ export const Dashboard: React.FC = () => {
               <p className="text-xs text-neutral-400">Evolução dos valores emprestados vs recebidos</p>
             </div>
             <div className="flex items-center gap-3 text-xs">
-              <span className="flex items-center gap-1 text-[#8BCF00]">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#8BCF00]"></span> Recebido
-              </span>
-              <span className="flex items-center gap-1 text-blue-400">
+              <span className="flex items-center gap-1 text-blue-400 font-medium">
                 <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Emprestado
+              </span>
+              <span className="flex items-center gap-1 text-[#8BCF00] font-medium">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#8BCF00]"></span> Recebido
               </span>
             </div>
           </div>
@@ -290,13 +282,52 @@ export const Dashboard: React.FC = () => {
               <BarChart data={monthlyRevenueData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
                 <XAxis dataKey="name" stroke="#737373" fontSize={12} />
-                <YAxis stroke="#737373" fontSize={12} tickFormatter={(val) => `R$${val / 1000}k`} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#171717', borderColor: '#333', borderRadius: '12px' }}
-                  formatter={(value: any) => [formatCurrency(value), '']}
+                <YAxis
+                  stroke="#737373"
+                  fontSize={12}
+                  tickFormatter={(val) =>
+                    val === 0
+                      ? 'R$ 0'
+                      : val >= 1000
+                      ? `R$${(val / 1000).toFixed(val % 1000 === 0 ? 0 : 1)}k`
+                      : `R$${val}`
+                  }
                 />
-                <Bar dataKey="empréstimos" fill="#3B82F6" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="recebido" fill="#8BCF00" radius={[6, 6, 0, 0]} />
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (active && payload && payload.length) {
+                      const data = payload[0].payload;
+                      return (
+                        <div className="bg-[#171717] border border-neutral-700 p-3 rounded-xl shadow-2xl text-xs space-y-1.5 min-w-[175px]">
+                          <p className="font-bold text-white border-b border-neutral-800 pb-1 text-sm font-['Outfit']">
+                            {data.fullName || `Mês: ${label}`}
+                          </p>
+                          <div className="flex items-center justify-between gap-4 text-blue-400 font-semibold">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0"></span> Emprestado:
+                            </span>
+                            <span className="font-mono text-white">{formatCurrency(data.emprestado)}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-4 text-[#8BCF00] font-semibold">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-[#8BCF00] shrink-0"></span> Recebido:
+                            </span>
+                            <span className="font-mono text-white">{formatCurrency(data.recebido)}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-4 text-emerald-400 font-semibold pt-1 border-t border-neutral-800/80">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span> Lucro:
+                            </span>
+                            <span className="font-mono text-white">{formatCurrency(data.lucro)}</span>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Bar dataKey="emprestado" name="Emprestado" fill="#3B82F6" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="recebido" name="Recebido" fill="#8BCF00" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

@@ -1,5 +1,34 @@
-import { Client, Loan, SystemSettings, UserProfile } from '../types';
+import { Client, Loan, SystemSettings, UserProfile, EmployeeUser } from '../types';
 import { getTodayIso, getDateOffsetIso } from '../utils/calculations';
+
+export const INITIAL_EMPLOYEES: EmployeeUser[] = [
+  {
+    id: 'emp_mariana',
+    name: 'Mariana Silva',
+    email: 'mariana@credicontrol.com',
+    password: '@Mariana123',
+    role: 'employee',
+    roleTitle: 'Cobradora & Operadora',
+    phone: '(91) 98822-3344',
+    status: 'active',
+    createdAt: '2026-08-15T10:00:00.000Z',
+    createdByName: 'Edinelson (Admin)',
+    avatarUrl: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
+  },
+  {
+    id: 'emp_carlos',
+    name: 'Carlos Oliveira',
+    email: 'carlos@credicontrol.com',
+    password: '@Carlos123',
+    role: 'employee',
+    roleTitle: 'Atendente de Cobrança',
+    phone: '(91) 98711-5566',
+    status: 'active',
+    createdAt: '2026-08-20T14:30:00.000Z',
+    createdByName: 'Edinelson (Admin)',
+    avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
+  },
+];
 
 export const INITIAL_USER_PROFILES: UserProfile[] = [
   {

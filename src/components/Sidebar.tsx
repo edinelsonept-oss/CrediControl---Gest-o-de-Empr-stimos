@@ -14,6 +14,7 @@ import {
   CreditCard,
   Building2,
   LogOut,
+  UserCheck,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -27,7 +28,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, setIsMobileOpen 
     activeTab,
     setActiveTab,
     currentUser,
-    setCurrentUserRole,
     settings,
     toggleTheme,
     setIsLoanModalOpen,
@@ -49,6 +49,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, setIsMobileOpen 
     },
     { id: 'reports', label: 'Relatórios PDF/Excel', icon: FileBarChart },
     { id: 'map', label: 'Mapa de Clientes', icon: MapPin },
+    ...(currentUser.role === 'admin'
+      ? [{ id: 'employees', label: 'Funcionários & Acessos', icon: UserCheck }]
+      : []),
     { id: 'settings', label: 'Configurações', icon: Settings },
   ];
 
@@ -162,29 +165,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, setIsMobileOpen 
             >
               <LogOut className="w-4 h-4" />
             </button>
-          </div>
-
-          {/* Role Quick Toggle */}
-          <div className="flex items-center justify-between text-xs px-1 text-neutral-400">
-            <span>Perfil:</span>
-            <div className="flex gap-1 bg-neutral-800 p-1 rounded-lg">
-              <button
-                onClick={() => setCurrentUserRole('admin')}
-                className={`px-2 py-0.5 rounded font-medium cursor-pointer ${
-                  currentUser.role === 'admin' ? 'bg-[#8BCF00] text-black font-bold' : 'hover:text-white'
-                }`}
-              >
-                Admin
-              </button>
-              <button
-                onClick={() => setCurrentUserRole('employee')}
-                className={`px-2 py-0.5 rounded font-medium cursor-pointer ${
-                  currentUser.role === 'employee' ? 'bg-[#8BCF00] text-black font-bold' : 'hover:text-white'
-                }`}
-              >
-                Operador
-              </button>
-            </div>
           </div>
 
           {/* Theme & Settings summary */}

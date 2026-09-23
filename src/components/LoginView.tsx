@@ -7,7 +7,6 @@ import {
   ArrowRight,
   AlertCircle,
   KeyRound,
-  Check,
   Eye,
   EyeOff,
   Sparkles,
@@ -27,7 +26,13 @@ const ADMIN_EMAIL = 'edinelsonept@gmail.com';
 const ADMIN_PASSWORD = '@Coelho60';
 
 export const LoginView: React.FC = () => {
-  const { loginWithCustomUser, setIsAuthenticated } = useApp();
+  const {
+    loginWithCustomUser,
+    setIsAuthenticated,
+    employees,
+    authenticateEmployee,
+    isEmployeeEmailAllowed,
+  } = useApp();
 
   const [selectedRole, setSelectedRole] = useState<UserRole>('admin');
   const [email, setEmail] = useState(ADMIN_EMAIL);
@@ -37,16 +42,21 @@ export const LoginView: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  // Pick first active employee email for convenience if switching to employee
+  const firstActiveEmployee = employees.find((e) => e.status === 'active') || employees[0];
+
   const handleRoleChange = (role: UserRole) => {
     setSelectedRole(role);
     setErrorMessage('');
     if (role === 'admin') {
-      if (!email || email === 'funcionario@credicontrol.com') {
+      if (!email || email !== ADMIN_EMAIL) {
         setEmail(ADMIN_EMAIL);
+        setPassword('');
       }
     } else {
       if (email === ADMIN_EMAIL) {
-        setEmail('funcionario@credicontrol.com');
+        setEmail(firstActiveEmployee ? firstActiveEmployee.email : '');
+        setPassword('');
       }
     }
   };
@@ -64,7 +74,7 @@ export const LoginView: React.FC = () => {
     const cleanEmailLower = cleanEmail.toLowerCase();
 
     if (!cleanEmail || !password) {
-      setErrorMessage('Preencha seu e-mail e senha.');
+      setErrorMessage('Preencha seu e-mail e senha de acesso.');
       return;
     }
 
@@ -72,14 +82,12 @@ export const LoginView: React.FC = () => {
     setErrorMessage('');
 
     try {
-      // Administrator Login Verification
-      if (cleanEmailLower === ADMIN_EMAIL.toLowerCase() || selectedRole === 'admin') {
-        if (cleanEmailLower === ADMIN_EMAIL.toLowerCase()) {
-          if (password !== ADMIN_PASSWORD) {
-            setErrorMessage('Senha incorreta para o administrador.');
-            setIsLoading(false);
-            return;
-          }
+      // 1. Administrator Login Verification
+      if (cleanEmailLower === ADMIN_EMAIL.toLowerCase() || (selectedRole === 'admin' && cleanEmailLower === ADMIN_EMAIL.toLowerCase())) {
+        if (password !== ADMIN_PASSWORD) {
+          setErrorMessage('Senha incorreta para o administrador.');
+          setIsLoading(false);
+          return;
         }
 
         // Synchronize with Firebase Auth session
@@ -107,16 +115,22 @@ export const LoginView: React.FC = () => {
         return;
       }
 
-      // Employee / Operator Login
-      loginWithCustomUser({
-        id: `user_employee_${Date.now()}`,
-        name: 'Mariana Silva (Cobradora)',
-        email: cleanEmail,
-        role: 'employee',
-        avatarUrl:
-          'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
-      });
-      setIsAuthenticated(true);
+      // 2. Employee Login Verification (Must be created and enabled by Administrator)
+      const authResult = authenticateEmployee(cleanEmail, password);
+
+      if (!authResult.success) {
+        setErrorMessage(
+          authResult.message ||
+            'Acesso negado: O login de funcionário precisa ser criado pelo administrador.'
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      if (authResult.user) {
+        loginWithCustomUser(authResult.user);
+        setIsAuthenticated(true);
+      }
     } catch (err: any) {
       console.error('Login error:', err);
       setErrorMessage(err.message || 'Erro ao realizar login.');
@@ -133,55 +147,65 @@ export const LoginView: React.FC = () => {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
       const googleUser = result.user;
+      const userGoogleEmail = (googleUser.email || '').toLowerCase();
 
-      loginWithCustomUser({
-        id: googleUser.uid,
-        name: googleUser.displayName || (selectedRole === 'admin' ? 'Edinelson (Admin Google)' : 'Funcionário Google'),
-        email: googleUser.email || (selectedRole === 'admin' ? ADMIN_EMAIL : 'usuario.google@credicontrol.com'),
-        role: selectedRole,
-        avatarUrl:
-          googleUser.photoURL ||
-          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-      });
-      setIsAuthenticated(true);
+      if (selectedRole === 'admin') {
+        if (userGoogleEmail && userGoogleEmail !== ADMIN_EMAIL.toLowerCase()) {
+          setErrorMessage(
+            `Acesso negado: O e-mail Google "${userGoogleEmail}" não é o e-mail do Administrador (${ADMIN_EMAIL}).`
+          );
+          setIsLoading(false);
+          return;
+        }
+
+        loginWithCustomUser({
+          id: googleUser.uid,
+          name: googleUser.displayName || 'Edinelson (Admin)',
+          email: ADMIN_EMAIL,
+          role: 'admin',
+          avatarUrl:
+            googleUser.photoURL ||
+            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+        });
+        setIsAuthenticated(true);
+      } else {
+        // Must be an admin-created employee email
+        const check = isEmployeeEmailAllowed(userGoogleEmail);
+        if (!check.allowed) {
+          setErrorMessage(
+            check.message ||
+              `Acesso não autorizado: O e-mail Google "${userGoogleEmail}" não foi cadastrado pelo administrador como funcionário.`
+          );
+          setIsLoading(false);
+          return;
+        }
+
+        const emp = check.employee!;
+        loginWithCustomUser({
+          id: emp.id,
+          name: emp.name,
+          email: emp.email,
+          role: 'employee',
+          roleTitle: emp.roleTitle,
+          avatarUrl:
+            googleUser.photoURL ||
+            emp.avatarUrl ||
+            'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
+        });
+        setIsAuthenticated(true);
+      }
     } catch (err: any) {
       console.warn('Google popup notice:', err);
-      // Fallback for iframe preview environment where Google OAuth popup might be restricted
-      loginWithCustomUser({
-        id: `user_google_${Date.now()}`,
-        name: selectedRole === 'admin' ? 'Edinelson (Admin)' : 'Mariana Silva (Funcionária)',
-        email: selectedRole === 'admin' ? ADMIN_EMAIL : 'usuario.google@credicontrol.com',
-        role: selectedRole,
-        avatarUrl:
-          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-      });
-      setIsAuthenticated(true);
+      if (err.code === 'auth/popup-closed-by-user') {
+        setErrorMessage('Autenticação com Google cancelada. Por favor tente novamente ou use e-mail e senha.');
+      } else {
+        setErrorMessage(
+          'Login com Google indisponível ou não autorizado. Por favor, utilize seu e-mail e senha abaixo.'
+        );
+      }
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleDemoLogin = (role: UserRole) => {
-    if (role === 'admin') {
-      loginWithCustomUser({
-        id: 'user_admin',
-        name: 'Edinelson (Admin)',
-        email: ADMIN_EMAIL,
-        role: 'admin',
-        avatarUrl:
-          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-      });
-    } else {
-      loginWithCustomUser({
-        id: 'user_employee',
-        name: 'Mariana Silva (Cobradora)',
-        email: 'mariana@credicontrol.com',
-        role: 'employee',
-        avatarUrl:
-          'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
-      });
-    }
-    setIsAuthenticated(true);
   };
 
   return (
@@ -249,6 +273,21 @@ export const LoginView: React.FC = () => {
             >
               Preencher
             </button>
+          </div>
+        )}
+
+        {/* Employee Admin-Created Helper Badge */}
+        {selectedRole === 'employee' && (
+          <div className="p-3 bg-neutral-900/90 border border-neutral-800 rounded-2xl flex items-start gap-2.5 text-xs">
+            <User className="w-4 h-4 text-[#8BCF00] shrink-0 mt-0.5" />
+            <div className="space-y-0.5 text-left">
+              <p className="font-bold text-white text-xs">
+                Login criado pelo Administrador
+              </p>
+              <p className="text-[11px] text-neutral-400 leading-relaxed">
+                Funcionários utilizam o e-mail e senha cadastrados pelo Administrador na aba de Funcionários.
+              </p>
+            </div>
           </div>
         )}
 
@@ -354,29 +393,6 @@ export const LoginView: React.FC = () => {
           </svg>
           <span>Logar com o Google</span>
         </button>
-
-        {/* Fast Demo Access */}
-        <div className="pt-2 border-t border-neutral-800/80 space-y-2">
-          <p className="text-[11px] text-center text-neutral-500 font-semibold uppercase tracking-wider">
-            Acesso Rápido de Demonstração
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => handleDemoLogin('admin')}
-              className="bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white p-2 rounded-xl text-xs font-semibold border border-neutral-800 transition-all text-center cursor-pointer flex items-center justify-center gap-1"
-            >
-              <Check className="w-3.5 h-3.5 text-[#8BCF00]" /> Admin (Edinelson)
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDemoLogin('employee')}
-              className="bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white p-2 rounded-xl text-xs font-semibold border border-neutral-800 transition-all text-center cursor-pointer flex items-center justify-center gap-1"
-            >
-              <Check className="w-3.5 h-3.5 text-[#8BCF00]" /> Operador (Mariana)
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Forgot Password Modal */}

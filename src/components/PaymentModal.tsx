@@ -2,7 +2,13 @@ import React, { useState } from 'react';
 import { X, CheckCircle2, Receipt, DollarSign } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Loan } from '../types';
-import { formatCurrency, getLoanFinancialSummary, getTodayIso } from '../utils/calculations';
+import {
+  formatCurrency,
+  getLoanFinancialSummary,
+  getTodayIso,
+  parseAndFormatCurrencyInput,
+  formatCurrencyOnBlur,
+} from '../utils/calculations';
 import { generatePaymentReceiptPdf } from '../utils/pdfExport';
 
 interface PaymentModalProps {
@@ -15,6 +21,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, loa
   const { clients, settings, registerPayment } = useApp();
 
   const [amount, setAmount] = useState<number>(0);
+  const [amountInputStr, setAmountInputStr] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'dinheiro' | 'transferencia' | 'cartao'>('pix');
   const [note, setNote] = useState<string>('');
 
@@ -22,10 +29,26 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, loa
     if (loan) {
       const summary = getLoanFinancialSummary(loan, undefined, settings.defaultDailyFine);
       setAmount(summary.remainingBalance);
+      setAmountInputStr(formatCurrencyOnBlur(summary.remainingBalance));
       setNote('');
       setPaymentMethod('pix');
     }
   }, [loan, settings.defaultDailyFine]);
+
+  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value;
+    const { display, numeric } = parseAndFormatCurrencyInput(rawVal);
+    setAmountInputStr(display);
+    setAmount(numeric);
+  };
+
+  const handleAmountBlur = () => {
+    if (amount > 0) {
+      setAmountInputStr(formatCurrencyOnBlur(amount));
+    } else {
+      setAmountInputStr('');
+    }
+  };
 
   if (!isOpen || !loan) return null;
 
@@ -92,19 +115,23 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, loa
             <div className="relative">
               <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 font-bold">R$</span>
               <input
-                type="number"
-                min="1"
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 required
-                value={amount}
-                onChange={(e) => setAmount(parseFloat(e.target.value) || 0)}
+                placeholder="0,00"
+                value={amountInputStr}
+                onChange={handleAmountChange}
+                onBlur={handleAmountBlur}
                 className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl pl-10 pr-4 py-2.5 text-lg font-extrabold text-white outline-none"
               />
             </div>
             <button
               type="button"
-              onClick={() => setAmount(summary.remainingBalance)}
-              className="text-[11px] text-[#8BCF00] hover:underline font-semibold mt-1"
+              onClick={() => {
+                setAmount(summary.remainingBalance);
+                setAmountInputStr(formatCurrencyOnBlur(summary.remainingBalance));
+              }}
+              className="text-[11px] text-[#8BCF00] hover:underline font-semibold mt-1 cursor-pointer"
             >
               Quitar Total ({formatCurrency(summary.remainingBalance)})
             </button>

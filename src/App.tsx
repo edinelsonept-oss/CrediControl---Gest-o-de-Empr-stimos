@@ -13,6 +13,7 @@ import { PaymentModal } from './components/PaymentModal';
 import { MapView } from './components/MapView';
 import { ReportsView } from './components/ReportsView';
 import { SettingsView } from './components/SettingsView';
+import { EmployeesView } from './components/EmployeesView';
 import { LoginView } from './components/LoginView';
 import { FirebaseSyncBanner } from './components/FirebaseSyncBanner';
 import { Client } from './types';
@@ -20,6 +21,7 @@ import { Client } from './types';
 function AppContent() {
   const {
     isAuthenticated,
+    currentUser,
     activeTab,
     selectedClientDetail,
     setSelectedClientDetail,
@@ -95,6 +97,7 @@ function AppContent() {
           {activeTab === 'loans' && <LoanList />}
           {activeTab === 'map' && <MapView />}
           {activeTab === 'reports' && <ReportsView />}
+          {activeTab === 'employees' && (currentUser.role === 'admin' ? <EmployeesView /> : <Dashboard />)}
           {activeTab === 'settings' && <SettingsView />}
         </main>
       </div>

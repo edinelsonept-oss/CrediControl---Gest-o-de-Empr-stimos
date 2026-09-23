@@ -6,6 +6,21 @@ export interface UserProfile {
   email: string;
   role: UserRole;
   avatarUrl?: string;
+  roleTitle?: string;
+}
+
+export interface EmployeeUser {
+  id: string;
+  name: string;
+  email: string;
+  password: string; // Senha cadastrada pelo administrador
+  role: 'employee';
+  roleTitle: string; // Ex: 'Cobrador(a)', 'Operador(a) Financeiro', 'Atendente'
+  phone?: string;
+  status: 'active' | 'inactive';
+  createdAt: string;
+  createdByName: string; // Ex: 'Edinelson (Admin)'
+  avatarUrl?: string;
 }
 
 export interface ClientDocument {
