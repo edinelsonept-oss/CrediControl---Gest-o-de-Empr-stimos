@@ -1,7 +1,7 @@
 {
   "rules": {
-    ".read": true,
-    ".write": true,
+    ".read": "auth != null",
+    ".write": "auth != null",
     "clients": {
       ".indexOn": ["cpf", "fullName", "createdAt"]
     },
@@ -9,8 +9,12 @@
       ".indexOn": ["clientId", "status", "dueDate", "createdAt"]
     },
     "settings": {
-      ".read": true,
-      ".write": true
+      ".read": "auth != null",
+      ".write": "auth != null && auth.token.email === 'edinelsonept@gmail.com'"
+    },
+    "audit_logs": {
+      ".read": "auth != null && auth.token.email === 'edinelsonept@gmail.com'",
+      ".write": "auth != null"
     }
   }
 }

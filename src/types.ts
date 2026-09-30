@@ -139,3 +139,54 @@ export interface NotificationAlert {
 }
 
 export type FilterStatus = 'todos' | 'em_dia' | 'proximo' | 'em_atraso' | 'quitado' | 'vencendo_hoje' | 'vencendo_amanha';
+
+export type AuditAction =
+  | 'CREATE_CLIENT'
+  | 'UPDATE_CLIENT'
+  | 'DELETE_CLIENT'
+  | 'CREATE_LOAN'
+  | 'UPDATE_LOAN'
+  | 'DELETE_LOAN'
+  | 'REGISTER_PAYMENT'
+  | 'UPDATE_SETTINGS'
+  | 'CREATE_EMPLOYEE'
+  | 'UPDATE_EMPLOYEE'
+  | 'DELETE_EMPLOYEE'
+  | 'AUTH_LOGIN'
+  | 'AUTH_LOGOUT'
+  | 'DATABASE_BACKUP'
+  | 'DATABASE_RESTORE'
+  | 'DATABASE_MIGRATION';
+
+export interface AuditLog {
+  id: string;
+  action: AuditAction;
+  entityType: 'client' | 'loan' | 'payment' | 'employee' | 'settings' | 'auth' | 'backup' | 'migration';
+  entityId: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userRole: 'admin' | 'employee' | 'system';
+  timestamp: string;
+  details: Record<string, any>;
+  ipAddress?: string;
+}
+
+export interface DatabaseBackup {
+  metadata: {
+    app: string;
+    version: string;
+    schemaVersion: number;
+    exportedAt: string;
+    exportedBy: string;
+    totalClients: number;
+    totalLoans: number;
+    totalEmployees: number;
+    checksum: string;
+  };
+  clients: Client[];
+  loans: Loan[];
+  employees: EmployeeUser[];
+  settings: SystemSettings;
+  auditLogs?: AuditLog[];
+}

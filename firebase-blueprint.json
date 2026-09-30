@@ -52,6 +52,23 @@
         "createdAt": { "type": "string" }
       },
       "required": ["name", "email", "role", "status"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable audit trail of security and business actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "entityType": { "type": "string" },
+        "entityId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userRole": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["action", "entityType", "entityId", "userId", "timestamp"]
     }
   },
   "firestore": {
@@ -70,6 +87,10 @@
     "settings": {
       "schema": { "$ref": "#/entities/Settings" },
       "description": "System configuration documents"
+    },
+    "audit_logs": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Append-only immutable audit log collection for security and compliance"
     }
   }
 }

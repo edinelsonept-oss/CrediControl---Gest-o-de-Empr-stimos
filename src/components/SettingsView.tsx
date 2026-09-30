@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Settings,
   Building2,
@@ -8,10 +8,14 @@ import {
   Save,
   CheckCircle2,
   ShieldAlert,
+  ShieldCheck,
   Download,
   Upload,
   UserCheck,
   UserPlus,
+  Lock,
+  History,
+  FileCheck,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import {
@@ -21,7 +25,17 @@ import {
 } from '../utils/calculations';
 
 export const SettingsView: React.FC = () => {
-  const { settings, updateSettings, resetToSampleData, currentUser, employees, setActiveTab } = useApp();
+  const {
+    settings,
+    updateSettings,
+    resetToSampleData,
+    currentUser,
+    employees,
+    setActiveTab,
+    auditLogs,
+    downloadBackup,
+    restoreBackupFromFile,
+  } = useApp();
 
   const [defaultInterestRate, setDefaultInterestRate] = useState<number>(settings.defaultInterestRate);
   const [interestRateInputStr, setInterestRateInputStr] = useState<string>(String(settings.defaultInterestRate));
@@ -34,6 +48,9 @@ export const SettingsView: React.FC = () => {
   const [companyCnpj, setCompanyCnpj] = useState<string>(settings.companyCnpj || '');
 
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [restoreMessage, setRestoreMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [showAuditLogs, setShowAuditLogs] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync if settings change externally
   React.useEffect(() => {
@@ -80,19 +97,24 @@ export const SettingsView: React.FC = () => {
     setTimeout(() => setSavedSuccess(false), 3000);
   };
 
-  const handleBackupExport = () => {
-    const backupData = {
-      clients: JSON.parse(localStorage.getItem('credicontrol_loan_app_v1_clients') || '[]'),
-      loans: JSON.parse(localStorage.getItem('credicontrol_loan_app_v1_loans') || '[]'),
-      settings,
-      exportedAt: new Date().toISOString(),
-    };
-    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Backup_CrediControl_${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
+  const handleFileRestore = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const res = await restoreBackupFromFile(text);
+      if (res.success) {
+        setRestoreMessage({ type: 'success', text: res.message });
+      } else {
+        setRestoreMessage({ type: 'error', text: res.message });
+      }
+    } catch (err: any) {
+      setRestoreMessage({ type: 'error', text: 'Falha ao ler o arquivo de backup.' });
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setTimeout(() => setRestoreMessage(null), 6000);
+    }
   };
 
   return (
@@ -260,21 +282,62 @@ export const SettingsView: React.FC = () => {
 
         {/* Database & Backup Options */}
         <div className="bg-[#1C1C1C] border border-neutral-800 p-6 rounded-3xl shadow-xl space-y-4">
-          <h3 className="text-base font-bold text-white font-['Outfit'] flex items-center gap-2">
-            <Download className="w-5 h-5 text-[#8BCF00]" /> Backup & Restauração de Dados
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-bold text-white font-['Outfit'] flex items-center gap-2">
+              <Download className="w-5 h-5 text-[#8BCF00]" /> Backup & Restauração de Dados
+            </h3>
+            <span className="text-[11px] font-mono bg-[#8BCF00]/10 text-[#8BCF00] border border-[#8BCF00]/30 px-2.5 py-0.5 rounded-full font-bold">
+              Checksum SHA-256
+            </span>
+          </div>
           <p className="text-xs text-neutral-400">
-            Faça download do arquivo de backup de segurança em tempo real com todos os clientes e empréstimos.
+            Exporte backups criptograficamente assinados com verificação de integridade e restaure bases de dados completas com segurança.
           </p>
+
+          {restoreMessage && (
+            <div
+              className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 ${
+                restoreMessage.type === 'success'
+                  ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300'
+                  : 'bg-red-500/15 border border-red-500/30 text-red-300'
+              }`}
+            >
+              {restoreMessage.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
+              )}
+              <span>{restoreMessage.text}</span>
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-3 pt-1">
             <button
               type="button"
-              onClick={handleBackupExport}
-              className="bg-neutral-800 hover:bg-neutral-700 text-white font-semibold text-xs px-4 py-2.5 rounded-xl border border-neutral-700 flex items-center gap-2 cursor-pointer"
+              onClick={downloadBackup}
+              className="bg-neutral-800 hover:bg-neutral-700 text-white font-semibold text-xs px-4 py-2.5 rounded-xl border border-neutral-700 flex items-center gap-2 cursor-pointer transition-colors"
             >
-              <Download className="w-4 h-4 text-[#8BCF00]" /> Baixar Backup JSON em Nuvem
+              <Download className="w-4 h-4 text-[#8BCF00]" /> Baixar Backup Seguro (JSON)
             </button>
+
+            {currentUser.role === 'admin' && (
+              <>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileRestore}
+                  accept=".json,application/json"
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-neutral-800 hover:bg-neutral-700 text-white font-semibold text-xs px-4 py-2.5 rounded-xl border border-neutral-700 flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Upload className="w-4 h-4 text-[#8BCF00]" /> Restaurar Arquivo de Backup
+                </button>
+              </>
+            )}
 
             <button
               type="button"
@@ -291,53 +354,95 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
 
-        {/* Firebase Sync & Rules Information */}
+        {/* Security Audit Trail Viewer */}
+        <div className="bg-[#1C1C1C] border border-neutral-800 p-6 rounded-3xl shadow-xl space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <History className="w-5 h-5 text-[#8BCF00]" />
+              <div>
+                <h3 className="text-base font-bold text-white font-['Outfit']">Trilha de Auditoria Imutável</h3>
+                <p className="text-xs text-neutral-400">
+                  Registro de ações críticas, transações financeiras e acessos ({auditLogs.length} eventos registrados)
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAuditLogs(!showAuditLogs)}
+              className="px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-xs font-semibold text-neutral-200 rounded-xl border border-neutral-700 transition-colors cursor-pointer"
+            >
+              {showAuditLogs ? 'Ocultar Logs' : 'Ver Logs Recentes'}
+            </button>
+          </div>
+
+          {showAuditLogs && (
+            <div className="space-y-2 pt-2">
+              <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                {auditLogs.length === 0 ? (
+                  <p className="text-xs text-neutral-500 py-3 text-center">Nenhum evento registrado ainda.</p>
+                ) : (
+                  auditLogs.slice(0, 30).map((log) => (
+                    <div
+                      key={log.id}
+                      className="p-3 bg-neutral-950 rounded-2xl border border-neutral-800/80 text-xs flex items-start justify-between gap-3"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-[#8BCF00]">{log.action}</span>
+                          <span className="text-neutral-500">•</span>
+                          <span className="text-neutral-400">{log.entityType} ({log.entityId})</span>
+                        </div>
+                        <p className="text-neutral-300 text-[11px]">
+                          Usuário: <span className="font-semibold text-white">{log.userName}</span> ({log.userRole})
+                        </p>
+                        {log.details && (
+                          <pre className="text-[10px] text-neutral-400 font-mono overflow-x-auto bg-neutral-900/60 p-1.5 rounded-lg border border-neutral-800">
+                            {JSON.stringify(log.details, null, 2)}
+                          </pre>
+                        )}
+                      </div>
+                      <span className="text-[10px] font-mono text-neutral-500 shrink-0">
+                        {new Date(log.timestamp).toLocaleString('pt-BR')}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Security & RBAC Status */}
         <div className="bg-[#1C1C1C] border border-neutral-800 p-6 rounded-3xl shadow-xl space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-bold text-white font-['Outfit'] flex items-center gap-2">
-              <ShieldAlert className="w-5 h-5 text-[#8BCF00]" /> Sincronização Firebase (credicontrol-8315e)
+              <ShieldCheck className="w-5 h-5 text-[#8BCF00]" /> Segurança do Banco de Dados & Menor Privilégio
             </h3>
-            <span className="text-xs font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-full font-semibold">
-              Armazenamento Local Ativo
+            <span className="text-xs font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-full font-semibold flex items-center gap-1.5">
+              <Lock className="w-3 h-3" /> Proteção Ativa
             </span>
           </div>
           <p className="text-xs text-neutral-400 leading-relaxed">
-            Seus dados são salvos localmente e replicados na nuvem. Se o Firebase Console indicar erro de permissão (Missing or insufficient permissions), publique as regras no painel do Firebase:
+            O CrediControl implementa o princípio do menor privilégio. Todas as alterações passam pela camada de autorização, validação de integridade financeira e transações atômicas ACID.
           </p>
-          <div className="bg-neutral-950 p-3.5 rounded-2xl border border-neutral-800 text-xs font-mono text-neutral-300 space-y-2">
-            <div className="text-[11px] text-[#8BCF00] font-bold uppercase tracking-wider">
-              Regras do Cloud Firestore:
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 text-xs">
+            <div className="p-3 bg-neutral-950 rounded-2xl border border-neutral-800/80 flex items-center gap-2.5">
+              <FileCheck className="w-4 h-4 text-[#8BCF00] shrink-0" />
+              <span className="text-neutral-300">Validação CPF Módulo 11 & Sanitização XSS/NoSQL</span>
             </div>
-            <pre className="text-neutral-300 overflow-x-auto leading-relaxed">
-{`rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
-    }
-  }
-}`}
-            </pre>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => {
-                navigator.clipboard.writeText(`rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if true;\n    }\n  }\n}`);
-                alert('Regras do Firestore copiadas com sucesso!');
-              }}
-              className="bg-[#8BCF00] hover:bg-[#9DE000] text-black font-bold text-xs px-3.5 py-2 rounded-xl transition-colors cursor-pointer"
-            >
-              Copiar Regras do Firestore
-            </button>
-            <a
-              href="https://console.firebase.google.com/project/credicontrol-8315e/firestore/rules"
-              target="_blank"
-              rel="noreferrer"
-              className="bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold px-3.5 py-2 rounded-xl transition-colors inline-flex items-center gap-1.5"
-            >
-              Abrir Console do Firestore
-            </a>
+            <div className="p-3 bg-neutral-950 rounded-2xl border border-neutral-800/80 flex items-center gap-2.5">
+              <Lock className="w-4 h-4 text-[#8BCF00] shrink-0" />
+              <span className="text-neutral-300">RBAC: Apenas Admin pode excluir clientes e empréstimos</span>
+            </div>
+            <div className="p-3 bg-neutral-950 rounded-2xl border border-neutral-800/80 flex items-center gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-[#8BCF00] shrink-0" />
+              <span className="text-neutral-300">Transações Atômicas ACID via Firestore runTransaction</span>
+            </div>
+            <div className="p-3 bg-neutral-950 rounded-2xl border border-neutral-800/80 flex items-center gap-2.5">
+              <History className="w-4 h-4 text-[#8BCF00] shrink-0" />
+              <span className="text-neutral-300">Coleção audit_logs Imutável e Protegida contra Exclusão</span>
+            </div>
           </div>
         </div>
       </form>

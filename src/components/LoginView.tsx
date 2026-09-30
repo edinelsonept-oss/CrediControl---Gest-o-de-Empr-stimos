@@ -21,9 +21,9 @@ import { auth } from '../lib/firebase';
 import { useApp } from '../context/AppContext';
 import { UserRole } from '../types';
 import { ForgotPasswordModal } from './ForgotPasswordModal';
+import { logAuditEvent } from '../utils/auditLogger';
 
-const ADMIN_EMAIL = 'edinelsonept@gmail.com';
-const ADMIN_PASSWORD = '@Coelho60';
+const ADMIN_EMAIL = ((import.meta as any).env?.VITE_ADMIN_EMAIL as string) || 'edinelsonept@gmail.com';
 
 export const LoginView: React.FC = () => {
   const {
@@ -61,13 +61,6 @@ export const LoginView: React.FC = () => {
     }
   };
 
-  const handleFillAdminCredentials = () => {
-    setSelectedRole('admin');
-    setEmail(ADMIN_EMAIL);
-    setPassword(ADMIN_PASSWORD);
-    setErrorMessage('');
-  };
-
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanEmail = email.trim();
@@ -84,32 +77,37 @@ export const LoginView: React.FC = () => {
     try {
       // 1. Administrator Login Verification
       if (cleanEmailLower === ADMIN_EMAIL.toLowerCase() || (selectedRole === 'admin' && cleanEmailLower === ADMIN_EMAIL.toLowerCase())) {
-        if (password !== ADMIN_PASSWORD) {
-          setErrorMessage('Senha incorreta para o administrador.');
-          setIsLoading(false);
-          return;
-        }
-
-        // Synchronize with Firebase Auth session
         try {
-          await signInWithEmailAndPassword(auth, ADMIN_EMAIL, ADMIN_PASSWORD);
+          await signInWithEmailAndPassword(auth, ADMIN_EMAIL, password);
         } catch (fbErr: any) {
           if (fbErr.code === 'auth/user-not-found' || fbErr.code === 'auth/invalid-credential') {
             try {
-              await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, ADMIN_PASSWORD);
-            } catch (createErr) {
-              console.warn('Firebase Auth user registration note:', createErr);
+              await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, password);
+            } catch {
+              setErrorMessage('Credenciais incorretas para o administrador.');
+              setIsLoading(false);
+              return;
             }
+          } else if (fbErr.code === 'auth/wrong-password') {
+            setErrorMessage('Senha incorreta para o administrador.');
+            setIsLoading(false);
+            return;
           }
         }
 
-        loginWithCustomUser({
+        const adminUser = {
           id: 'user_admin',
           name: 'Edinelson (Admin)',
           email: ADMIN_EMAIL,
-          role: 'admin',
+          role: 'admin' as const,
           avatarUrl:
             'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+        };
+
+        loginWithCustomUser(adminUser);
+        await logAuditEvent(adminUser, 'AUTH_LOGIN', 'auth', ADMIN_EMAIL, {
+          method: 'email_password',
+          role: 'admin',
         });
         setIsAuthenticated(true);
         return;
@@ -129,6 +127,10 @@ export const LoginView: React.FC = () => {
 
       if (authResult.user) {
         loginWithCustomUser(authResult.user);
+        await logAuditEvent(authResult.user, 'AUTH_LOGIN', 'auth', cleanEmail, {
+          method: 'employee_credentials',
+          role: 'employee',
+        });
         setIsAuthenticated(true);
       }
     } catch (err: any) {
@@ -257,22 +259,13 @@ export const LoginView: React.FC = () => {
           </button>
         </div>
 
-        {/* Admin Credentials Helper Badge */}
+        {/* Admin Access Indicator */}
         {selectedRole === 'admin' && (
-          <div className="p-3 bg-[#8BCF00]/10 border border-[#8BCF00]/30 rounded-2xl flex items-center justify-between gap-2 text-xs">
-            <div className="flex items-center gap-2 text-neutral-200">
-              <Sparkles className="w-4 h-4 text-[#8BCF00] shrink-0" />
-              <span className="truncate">
-                Admin: <strong className="text-white">{ADMIN_EMAIL}</strong>
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={handleFillAdminCredentials}
-              className="px-2.5 py-1 bg-[#8BCF00] text-black text-[11px] font-bold rounded-lg hover:bg-[#9DE000] transition-colors shrink-0 cursor-pointer shadow-xs"
-            >
-              Preencher
-            </button>
+          <div className="p-3 bg-[#8BCF00]/10 border border-[#8BCF00]/30 rounded-2xl flex items-center gap-2 text-xs">
+            <Sparkles className="w-4 h-4 text-[#8BCF00] shrink-0" />
+            <span className="truncate text-neutral-200">
+              E-mail do Administrador: <strong className="text-white">{ADMIN_EMAIL}</strong>
+            </span>
           </div>
         )}
 

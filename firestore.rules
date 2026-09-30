@@ -2,23 +2,60 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Helper functions for Role-Based Access Control (RBAC)
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'edinelsonept@gmail.com' ||
+        (request.auth.token.role != null && request.auth.token.role == 'admin')
+      );
+    }
+
+    // Clients Collection: Authenticated read/write, deletion restricted to Admin
     match /clients/{clientId} {
-      allow read, write: if request.auth != null || true;
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdmin();
     }
+
+    // Loans Collection: Authenticated read/write, deletion restricted to Admin
     match /loans/{loanId} {
-      allow read, write: if request.auth != null || true;
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdmin();
     }
+
+    // Employees Collection: Only Admin can create, modify, or delete employee credentials
     match /employees/{employeeId} {
-      allow read, write: if request.auth != null || true;
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
+
+    // Settings Collection: Read-only for employees; updates restricted to Admin
     match /settings/{settingId} {
-      allow read, write: if request.auth != null || true;
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
+
+    // Audit Logs: Append-only immutable log. Updates and deletions are strictly forbidden!
+    match /audit_logs/{auditId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // Connection Health-Check
     match /test/{testId} {
-      allow read, write: if request.auth != null || true;
+      allow read, write: if true;
     }
+
+    // Default Fallback
     match /{document=**} {
-      allow read, write: if request.auth != null || true;
+      allow read, write: if isAuthenticated();
     }
   }
 }

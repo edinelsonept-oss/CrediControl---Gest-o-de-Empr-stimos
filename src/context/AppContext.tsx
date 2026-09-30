@@ -26,6 +26,7 @@ import {
   FilterStatus,
   PaymentRecord,
   NotificationAlert,
+  AuditLog,
 } from '../types';
 import {
   INITIAL_CLIENTS,
@@ -35,6 +36,15 @@ import {
   INITIAL_EMPLOYEES,
 } from '../data/initialData';
 import { getTodayIso, getDateOffsetIso, getLoanFinancialSummary } from '../utils/calculations';
+import {
+  validateClient,
+  validateLoan,
+  validatePayment,
+} from '../utils/securityValidator';
+import { logAuditEvent, getLocalAuditLogs } from '../utils/auditLogger';
+import { executeAtomicPayment } from '../utils/financialTransactions';
+import { generateDatabaseBackup, validateBackupFile } from '../utils/backupService';
+import { runDatabaseMigrations } from '../utils/dbMigrations';
 
 interface AppContextType {
   clients: Client[];
@@ -88,6 +98,11 @@ interface AppContextType {
   updateSettings: (newSettings: Partial<SystemSettings>) => void;
   resetToSampleData: () => void;
   
+  // Security, Audit & Disaster Recovery
+  auditLogs: AuditLog[];
+  downloadBackup: () => Promise<void>;
+  restoreBackupFromFile: (fileContent: string) => Promise<{ success: boolean; message: string }>;
+
   // Alerts / Notifications
   notifications: NotificationAlert[];
 
@@ -178,6 +193,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return localStorage.getItem(`${STORAGE_KEY}_auth`) === 'true';
   });
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => getLocalAuditLogs());
+
+  // Run database migrations on mount
+  useEffect(() => {
+    runDatabaseMigrations();
+  }, []);
 
   const loginWithCustomUser = (user: UserProfile) => {
     setCurrentUser(user);
@@ -327,10 +348,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           unsubClients = onSnapshot(
             collection(db, 'clients'),
             (snapshot) => {
+              setIsFirebasePermissionMissing(false);
               if (!snapshot.empty) {
                 const loadedClients: Client[] = snapshot.docs.map((d) => d.data() as Client);
                 setClients(loadedClients);
-                setIsFirebasePermissionMissing(false);
+              } else {
+                INITIAL_CLIENTS.forEach((c) => {
+                  setDoc(doc(db, 'clients', c.id), c).catch(() => {});
+                });
               }
             },
             (error) => {
@@ -352,10 +377,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           unsubLoans = onSnapshot(
             collection(db, 'loans'),
             (snapshot) => {
+              setIsFirebasePermissionMissing(false);
               if (!snapshot.empty) {
                 const loadedLoans: Loan[] = snapshot.docs.map((d) => d.data() as Loan);
                 setLoans(loadedLoans);
-                setIsFirebasePermissionMissing(false);
+              } else {
+                INITIAL_LOANS.forEach((l) => {
+                  setDoc(doc(db, 'loans', l.id), l).catch(() => {});
+                });
               }
             },
             (error) => {
@@ -377,10 +406,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           unsubEmployees = onSnapshot(
             collection(db, 'employees'),
             (snapshot) => {
+              setIsFirebasePermissionMissing(false);
               if (!snapshot.empty) {
                 const loadedEmployees: EmployeeUser[] = snapshot.docs.map((d) => d.data() as EmployeeUser);
                 setEmployees(loadedEmployees);
-                setIsFirebasePermissionMissing(false);
+              } else {
+                INITIAL_EMPLOYEES.forEach((e) => {
+                  setDoc(doc(db, 'employees', e.id), e).catch(() => {});
+                });
               }
             },
             (error) => {
@@ -402,9 +435,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           unsubSettings = onSnapshot(
             doc(db, 'settings', 'config'),
             (snapshot) => {
+              setIsFirebasePermissionMissing(false);
               if (snapshot.exists()) {
                 setSettings(snapshot.data() as SystemSettings);
-                setIsFirebasePermissionMissing(false);
+              } else {
+                setDoc(doc(db, 'settings', 'config'), INITIAL_SETTINGS).catch(() => {});
               }
             },
             (error) => {
@@ -522,11 +557,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addClient = (clientData: Omit<Client, 'id' | 'createdAt'>): Client => {
-    const newClient: Client = {
-      ...clientData,
-      id: `cli_${Date.now()}`,
-      createdAt: getTodayIso(),
-    };
+    // 1. Input Sanitization & Modulo 11 CPF Validation
+    const valResult = validateClient(clientData, clients, false);
+    if (!valResult.isValid) {
+      alert(valResult.errors.join('\n'));
+      throw new Error(valResult.errors.join(' '));
+    }
+    const newClient: Client = valResult.sanitizedData!;
+
     setClients((prev) => [newClient, ...prev]);
     if (db) {
       setDoc(doc(db, 'clients', newClient.id), newClient).catch((err) =>
@@ -538,33 +576,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         rtdbSet(rtdbRef(rtdb, `clients/${newClient.id}`), newClient).catch(() => {});
       } catch {}
     }
+
+    // 2. Audit Trail
+    logAuditEvent(currentUser, 'CREATE_CLIENT', 'client', newClient.id, {
+      fullName: newClient.fullName,
+      cpf: newClient.cpf,
+      phone: newClient.phone,
+    });
+
     return newClient;
   };
 
   const updateClient = (id: string, clientData: Partial<Client>) => {
+    const target = clients.find((c) => c.id === id);
+    if (!target) return;
+
+    // Validate updated data
+    const valResult = validateClient({ ...target, ...clientData, id }, clients, true);
+    if (!valResult.isValid) {
+      alert(valResult.errors.join('\n'));
+      return;
+    }
+    const sanitized = valResult.sanitizedData!;
+
     setClients((prev) => {
-      const updated = prev.map((c) => (c.id === id ? { ...c, ...clientData } : c));
-      const target = updated.find((c) => c.id === id);
-      if (target) {
-        if (db) {
-          setDoc(doc(db, 'clients', id), target).catch((err) =>
-            handleFirestoreError(err, OperationType.WRITE, `clients/${id}`)
-          );
-        }
-        if (rtdb) {
-          try {
-            rtdbSet(rtdbRef(rtdb, `clients/${id}`), target).catch(() => {});
-          } catch {}
-        }
+      const updated = prev.map((c) => (c.id === id ? sanitized : c));
+      if (db) {
+        setDoc(doc(db, 'clients', id), sanitized).catch((err) =>
+          handleFirestoreError(err, OperationType.WRITE, `clients/${id}`)
+        );
+      }
+      if (rtdb) {
+        try {
+          rtdbSet(rtdbRef(rtdb, `clients/${id}`), sanitized).catch(() => {});
+        } catch {}
       }
       return updated;
     });
+
     if (selectedClientDetail && selectedClientDetail.id === id) {
-      setSelectedClientDetail((prev) => (prev ? { ...prev, ...clientData } : null));
+      setSelectedClientDetail(sanitized);
     }
+
+    // Audit Trail
+    logAuditEvent(currentUser, 'UPDATE_CLIENT', 'client', id, {
+      fullName: sanitized.fullName,
+      updatedFields: Object.keys(clientData),
+    });
   };
 
   const deleteClient = (id: string) => {
+    // Role Authorization Check (Principle of Least Privilege)
+    if (currentUser.role !== 'admin') {
+      alert('Operação bloqueada: Apenas administradores têm autorização para excluir clientes.');
+      return;
+    }
+
+    const target = clients.find((c) => c.id === id);
+
     setClients((prev) => prev.filter((c) => c.id !== id));
     if (db) {
       deleteDoc(doc(db, 'clients', id)).catch((err) =>
@@ -594,15 +663,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return remaining;
     });
     if (selectedClientDetail?.id === id) setSelectedClientDetail(null);
+
+    // Audit Trail
+    logAuditEvent(currentUser, 'DELETE_CLIENT', 'client', id, {
+      deletedClientName: target?.fullName,
+      cpf: target?.cpf,
+    });
   };
 
   const addLoan = (loanData: Omit<Loan, 'id' | 'createdAt' | 'payments'>): Loan => {
-    const newLoan: Loan = {
-      ...loanData,
-      id: `loan_${Date.now()}`,
-      payments: [],
-      createdAt: getTodayIso(),
-    };
+    // Financial & Foreign Key Validation
+    const valResult = validateLoan(loanData, clients);
+    if (!valResult.isValid) {
+      alert(valResult.errors.join('\n'));
+      throw new Error(valResult.errors.join(' '));
+    }
+    const newLoan: Loan = valResult.sanitizedData!;
+
     setLoans((prev) => [newLoan, ...prev]);
     if (db) {
       setDoc(doc(db, 'loans', newLoan.id), newLoan).catch((err) =>
@@ -614,6 +691,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         rtdbSet(rtdbRef(rtdb, `loans/${newLoan.id}`), newLoan).catch(() => {});
       } catch {}
     }
+
+    // Audit Trail
+    logAuditEvent(currentUser, 'CREATE_LOAN', 'loan', newLoan.id, {
+      clientId: newLoan.clientId,
+      clientName: newLoan.clientName,
+      principalAmount: newLoan.principalAmount,
+      interestRatePercent: newLoan.interestRatePercent,
+      totalOriginalAmount: newLoan.totalOriginalAmount,
+      dueDate: newLoan.dueDate,
+    });
+
     return newLoan;
   };
 
@@ -638,9 +726,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (selectedLoanDetail && selectedLoanDetail.id === id) {
       setSelectedLoanDetail((prev) => (prev ? { ...prev, ...loanData } : null));
     }
+
+    // Audit Trail
+    logAuditEvent(currentUser, 'UPDATE_LOAN', 'loan', id, {
+      updatedFields: Object.keys(loanData),
+    });
   };
 
   const deleteLoan = (id: string) => {
+    // Role Authorization Check (Principle of Least Privilege)
+    if (currentUser.role !== 'admin') {
+      alert('Operação bloqueada: Apenas administradores têm autorização para excluir empréstimos.');
+      return;
+    }
+
+    const target = loans.find((l) => l.id === id);
+
     setLoans((prev) => prev.filter((l) => l.id !== id));
     if (db) {
       deleteDoc(doc(db, 'loans', id)).catch((err) =>
@@ -653,6 +754,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
     }
     if (selectedLoanDetail?.id === id) setSelectedLoanDetail(null);
+
+    // Audit Trail
+    logAuditEvent(currentUser, 'DELETE_LOAN', 'loan', id, {
+      clientName: target?.clientName,
+      principalAmount: target?.principalAmount,
+    });
   };
 
   const registerPayment = (
@@ -664,25 +771,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetLoan = loans.find((l) => l.id === loanId);
     if (!targetLoan) return null;
 
+    // Financial Validation: prevent overpayment, negative amounts, invalid state
+    const existingPayments = targetLoan.payments || [];
+    const totalPaidSoFar = existingPayments.reduce((s, p) => s + p.amount, 0);
+    const remainingDue = Math.max(0, targetLoan.totalOriginalAmount - totalPaidSoFar);
+
+    const valResult = validatePayment(targetLoan, amount, paymentMethod, remainingDue);
+    if (!valResult.isValid) {
+      alert(valResult.errors.join('\n'));
+      return null;
+    }
+
+    const safeAmount = valResult.sanitizedData!.amount;
+    const safeMethod = valResult.sanitizedData!.paymentMethod;
+
+    // ACID Atomic Transaction on Firestore (prevents race conditions)
+    executeAtomicPayment(loanId, safeAmount, safeMethod, currentUser, targetLoan, note).then((res) => {
+      if (res.success && res.updatedLoan) {
+        setLoans((prev) => prev.map((l) => (l.id === loanId ? res.updatedLoan! : l)));
+        if (selectedLoanDetail && selectedLoanDetail.id === loanId) {
+          setSelectedLoanDetail(res.updatedLoan);
+        }
+      }
+    });
+
+    // Optimistic Local State Update
+    const paymentId = `pay_${Date.now()}`;
     const newPayment: PaymentRecord = {
-      id: `pay_${Date.now()}`,
+      id: paymentId,
       loanId,
-      amount,
+      amount: safeAmount,
       date: getTodayIso(),
-      paymentMethod,
+      paymentMethod: safeMethod,
       note,
       registeredBy: currentUser.name,
     };
 
-    const updatedPayments = [...(targetLoan.payments || []), newPayment];
+    const updatedPayments = [...existingPayments, newPayment];
     const totalPaidNow = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
+    const newStatus = totalPaidNow >= targetLoan.totalOriginalAmount - 0.05 ? 'quitado' : targetLoan.status;
 
-    let newStatus = targetLoan.status;
-    if (totalPaidNow >= targetLoan.totalOriginalAmount) {
-      newStatus = 'quitado';
-    }
-
-    // Update installments if applicable
     const updatedInstallments = targetLoan.installments.map((inst) => {
       if (inst.status !== 'paga') {
         return {
@@ -703,16 +831,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setLoans((prev) => prev.map((l) => (l.id === loanId ? updatedLoan : l)));
-    if (db) {
-      setDoc(doc(db, 'loans', loanId), updatedLoan).catch((err) =>
-        handleFirestoreError(err, OperationType.WRITE, `loans/${loanId}`)
-      );
-    }
-    if (rtdb) {
-      try {
-        rtdbSet(rtdbRef(rtdb, `loans/${loanId}`), updatedLoan).catch(() => {});
-      } catch {}
-    }
     if (selectedLoanDetail && selectedLoanDetail.id === loanId) {
       setSelectedLoanDetail(updatedLoan);
     }
@@ -721,6 +839,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateSettings = (newSettings: Partial<SystemSettings>) => {
+    // Role Authorization Check
+    if (currentUser.role !== 'admin') {
+      alert('Operação bloqueada: Apenas administradores têm autorização para alterar as configurações do sistema.');
+      return;
+    }
+
     setSettings((prev) => {
       const updated = { ...prev, ...newSettings };
       if (db) {
@@ -735,12 +859,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return updated;
     });
+
+    // Audit Trail
+    logAuditEvent(currentUser, 'UPDATE_SETTINGS', 'settings', 'config', {
+      changedKeys: Object.keys(newSettings),
+    });
   };
 
-  // Employee Management (Created by Admin)
+  // Employee Management (Controlled strictly by Admin)
   const addEmployee = (
     employeeData: Omit<EmployeeUser, 'id' | 'createdAt' | 'createdByName'>
   ): EmployeeUser => {
+    if (currentUser.role !== 'admin') {
+      alert('Apenas administradores podem cadastrar funcionários.');
+      throw new Error('Operação não autorizada');
+    }
+
     const newEmployee: EmployeeUser = {
       ...employeeData,
       id: `emp_${Date.now()}`,
@@ -761,10 +895,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {}
     }
 
+    // Audit Trail (scrubbing sensitive password automatically)
+    logAuditEvent(currentUser, 'CREATE_EMPLOYEE', 'employee', newEmployee.id, {
+      name: newEmployee.name,
+      email: newEmployee.email,
+      roleTitle: newEmployee.roleTitle,
+    });
+
     return newEmployee;
   };
 
   const updateEmployee = (id: string, employeeData: Partial<EmployeeUser>) => {
+    if (currentUser.role !== 'admin') {
+      alert('Apenas administradores podem atualizar funcionários.');
+      return;
+    }
+
     setEmployees((prev) => {
       const updated = prev.map((e) => (e.id === id ? { ...e, ...employeeData } : e));
       const target = updated.find((e) => e.id === id);
@@ -782,9 +928,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return updated;
     });
+
+    logAuditEvent(currentUser, 'UPDATE_EMPLOYEE', 'employee', id, {
+      updatedFields: Object.keys(employeeData),
+    });
   };
 
   const deleteEmployee = (id: string) => {
+    if (currentUser.role !== 'admin') {
+      alert('Apenas administradores podem excluir funcionários.');
+      return;
+    }
+
+    const target = employees.find((e) => e.id === id);
+
     setEmployees((prev) => prev.filter((e) => e.id !== id));
     if (db) {
       deleteDoc(doc(db, 'employees', id)).catch((err) =>
@@ -796,9 +953,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         rtdbRemove(rtdbRef(rtdb, `employees/${id}`)).catch(() => {});
       } catch {}
     }
+
+    logAuditEvent(currentUser, 'DELETE_EMPLOYEE', 'employee', id, {
+      deletedEmployeeName: target?.name,
+      email: target?.email,
+    });
   };
 
   const toggleEmployeeStatus = (id: string) => {
+    if (currentUser.role !== 'admin') {
+      alert('Apenas administradores podem ativar/desativar funcionários.');
+      return;
+    }
+
     setEmployees((prev) => {
       const updated = prev.map((e) => {
         if (e.id === id) {
@@ -901,6 +1068,62 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem(`${STORAGE_KEY}_loans`);
     localStorage.removeItem(`${STORAGE_KEY}_settings`);
     localStorage.removeItem(`${STORAGE_KEY}_employees`);
+
+    if (db) {
+      INITIAL_CLIENTS.forEach((c) => setDoc(doc(db, 'clients', c.id), c).catch(() => {}));
+      INITIAL_LOANS.forEach((l) => setDoc(doc(db, 'loans', l.id), l).catch(() => {}));
+      INITIAL_EMPLOYEES.forEach((e) => setDoc(doc(db, 'employees', e.id), e).catch(() => {}));
+      setDoc(doc(db, 'settings', 'config'), INITIAL_SETTINGS).catch(() => {});
+    }
+
+    logAuditEvent(currentUser, 'UPDATE_SETTINGS', 'settings', 'config', {
+      action: 'RESET_SAMPLE_DATA',
+    });
+  };
+
+  const downloadBackup = async () => {
+    await generateDatabaseBackup(clients, loans, employees, settings, currentUser, auditLogs);
+  };
+
+  const restoreBackupFromFile = async (fileContent: string): Promise<{ success: boolean; message: string }> => {
+    if (currentUser.role !== 'admin') {
+      return { success: false, message: 'Operação não autorizada: Apenas administradores podem restaurar backups.' };
+    }
+
+    const val = validateBackupFile(fileContent);
+    if (!val.valid || !val.data) {
+      return { success: false, message: val.error || 'Arquivo de backup corrompido ou inválido.' };
+    }
+
+    const backup = val.data;
+
+    // Apply restored state
+    setClients(backup.clients);
+    setLoans(backup.loans);
+    if (backup.settings) setSettings(backup.settings);
+    if (backup.employees && backup.employees.length > 0) setEmployees(backup.employees);
+
+    // Sync to Firestore
+    if (db) {
+      backup.clients.forEach((c) => setDoc(doc(db, 'clients', c.id), c).catch(() => {}));
+      backup.loans.forEach((l) => setDoc(doc(db, 'loans', l.id), l).catch(() => {}));
+      if (backup.settings) setDoc(doc(db, 'settings', 'config'), backup.settings).catch(() => {});
+      if (backup.employees) {
+        backup.employees.forEach((e) => setDoc(doc(db, 'employees', e.id), e).catch(() => {}));
+      }
+    }
+
+    await logAuditEvent(currentUser, 'DATABASE_RESTORE', 'backup', `restore_${Date.now()}`, {
+      restoredClients: backup.clients.length,
+      restoredLoans: backup.loans.length,
+      backupExportedAt: backup.metadata.exportedAt,
+      backupExportedBy: backup.metadata.exportedBy,
+    });
+
+    return {
+      success: true,
+      message: `Restauração concluída com sucesso! ${backup.clients.length} clientes e ${backup.loans.length} contratos recuperados.`,
+    };
   };
 
   return (
@@ -954,6 +1177,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isFirebasePermissionMissing,
         dismissFirebaseWarning,
         retryFirebaseConnection,
+        auditLogs,
+        downloadBackup,
+        restoreBackupFromFile,
       }}
     >
       {children}
