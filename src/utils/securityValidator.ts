@@ -270,6 +270,8 @@ export function validateLoan(
     paymentFrequency: data.paymentFrequency || 'pagamento_unico_30',
     installmentsCount,
     dailyFineAmount: dailyFine,
+    collectionRoute: sanitizeString(data.collectionRoute) || undefined,
+    collectionMode: data.collectionMode,
     installments: data.installments || [],
     payments: data.payments || [],
     status: data.status || 'em_dia',

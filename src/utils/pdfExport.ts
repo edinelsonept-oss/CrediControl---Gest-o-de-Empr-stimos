@@ -135,3 +135,118 @@ export function generatePaymentReceiptPdf(payment: PaymentRecord, loan: Loan, cl
 
   doc.save(`Recibo_Pagamento_${payment.id}.pdf`);
 }
+
+/**
+ * Generates and downloads the official Promissory Note / Loan Contract PDF (Nota Promissória e Contrato)
+ */
+export function generatePromissoryNotePdf(loan: Loan, client: Client, settings: SystemSettings) {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const summary = getLoanFinancialSummary(loan, undefined, settings.defaultDailyFine);
+
+  // Border frame
+  doc.setDrawColor(40, 40, 40);
+  doc.setLineWidth(0.5);
+  doc.rect(10, 10, 190, 277);
+
+  // Header Title
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(20, 20, 20);
+  doc.text(settings.companyName.toUpperCase(), 105, 22, { align: 'center' });
+
+  doc.setFontSize(12);
+  doc.text('NOTA PROMISSÓRIA & CONTRATO DE MÚTUO FINANCEIRO', 105, 30, { align: 'center' });
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(80, 80, 80);
+  doc.text(`Nº do Contrato: ${loan.id}   |   Emissão: ${formatDate(loan.loanDate)}   |   Vencimento Final: ${formatDate(loan.dueDate)}`, 105, 36, { align: 'center' });
+
+  doc.setLineWidth(0.3);
+  doc.line(15, 40, 195, 40);
+
+  // Value Box
+  doc.setFillColor(245, 245, 245);
+  doc.roundedRect(15, 44, 180, 18, 2, 2, 'F');
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(20, 20, 20);
+  doc.text(`VALOR NOMINAL: ${formatCurrency(loan.totalOriginalAmount)}`, 20, 52);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`(Principal: ${formatCurrency(loan.principalAmount)} + Juros Acordados: ${formatCurrency(loan.interestAmount)} a ${loan.interestRatePercent}%)`, 20, 58);
+
+  // Promissory Note Text
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(20, 20, 20);
+  const legalText = `No dia ${formatDate(loan.dueDate)}, pagarei por esta única via de NOTA PROMISSÓRIA à ${settings.companyName.toUpperCase()}, inscrita sob o CNPJ ${settings.companyCnpj || 'sob registro local'}, ou à sua ordem, a quantia estipulada de ${formatCurrency(loan.totalOriginalAmount)}, em moeda corrente deste país.`;
+  const splitLegal = doc.splitTextToSize(legalText, 175);
+  doc.text(splitLegal, 18, 70);
+
+  // Client Details Box
+  doc.setFont('helvetica', 'bold');
+  doc.text('QUALIFICAÇÃO DO DEVEDOR / EMITENTE:', 18, 88);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Nome Completo: ${client.fullName}`, 18, 94);
+  doc.text(`CPF: ${client.cpf}   |   RG: ${client.rg || 'Não informado'}   |   Telefone: ${client.phone}`, 18, 100);
+  doc.text(`Endereço: ${client.address.street}, Nº ${client.address.number} - ${client.address.neighborhood}, ${client.address.city}/${client.address.state} (CEP: ${client.address.cep})`, 18, 106);
+
+  // Loan Schedule Table
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('CRONOGRAMA DE PAGAMENTO / PARCELAS:', 18, 118);
+
+  const installments = loan.installments && loan.installments.length > 0
+    ? loan.installments
+    : [{ id: '1', number: 1, dueDate: loan.dueDate, amount: loan.totalOriginalAmount, paidAmount: 0, status: 'em_dia' as const, delayDays: 0, fineAmount: 0 }];
+
+  const tableBody = installments.map((inst) => [
+    `Parcela ${inst.number}/${installments.length}`,
+    formatDate(inst.dueDate),
+    formatCurrency(inst.amount),
+    inst.status === 'paga' ? 'Paga' : inst.status === 'atrasada' ? 'Em Atraso' : 'A Vencer',
+  ]);
+
+  autoTable(doc, {
+    startY: 122,
+    head: [['Parcela', 'Vencimento', 'Valor', 'Situação']],
+    body: tableBody,
+    theme: 'grid',
+    headStyles: { fillColor: [40, 40, 40], textColor: [255, 255, 255], fontStyle: 'bold' },
+    styles: { fontSize: 8 },
+    margin: { left: 18, right: 18 },
+  });
+
+  const lastY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 10 : 180;
+
+  // Penalty Clause
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`CLÁUSULA DE MORA: O atraso na liquidação de qualquer parcela acarretará multa moratória de ${formatCurrency(loan.dailyFineAmount || 20)} por dia de atraso, calculada até a data da efetiva quitação.`, 18, lastY, { maxWidth: 175 });
+
+  // Signatures
+  const sigY = Math.min(250, lastY + 30);
+  doc.line(25, sigY, 95, sigY);
+  doc.line(115, sigY, 185, sigY);
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.text(client.fullName.toUpperCase(), 60, sigY + 5, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Emitente (CPF: ${client.cpf})`, 60, sigY + 9, { align: 'center' });
+
+  doc.setFont('helvetica', 'bold');
+  doc.text(settings.companyName.toUpperCase(), 150, sigY + 5, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.text('Credor / Beneficiário', 150, sigY + 9, { align: 'center' });
+
+  doc.save(`Nota_Promissoria_${client.fullName.replace(/\s+/g, '_')}_${loan.id}.pdf`);
+}
+

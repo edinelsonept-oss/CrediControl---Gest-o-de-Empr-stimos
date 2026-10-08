@@ -104,6 +104,8 @@ export interface Loan {
   paymentFrequency: PaymentFrequency;
   installmentsCount: number;
   dailyFineAmount: number; // default R$ 20.00 / day
+  collectionRoute?: string; // Ex: 'Rota Centro', 'Rota Praia / Atalaia', etc.
+  collectionMode?: 'cobranca_externa_rota' | 'cobranca_balcao_pix'; // Route-based collection or Counter/PIX
   installments: Installment[];
   payments: PaymentRecord[];
   status: 'em_dia' | 'proximo_vencimento' | 'em_atraso' | 'quitado';

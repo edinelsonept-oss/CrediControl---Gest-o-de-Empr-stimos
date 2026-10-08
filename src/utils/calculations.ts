@@ -268,6 +268,12 @@ export function getLoanFinancialSummary(loan: Loan, todayIso: string = getTodayI
     totalFineAccrued = fineAmount;
   }
 
+  // Payment Allocation: Overdue fines paid down first, remaining applied to principal/interest
+  const finePaid = Math.min(totalFineAccrued, totalPaid);
+  const remainingFine = Math.max(0, totalFineAccrued - finePaid);
+  const principalPaid = Math.max(0, totalPaid - finePaid);
+  const remainingPrincipal = Math.max(0, loan.totalOriginalAmount - principalPaid);
+
   const updatedTotalAmount = loan.totalOriginalAmount + totalFineAccrued;
   const remainingBalance = Math.max(0, updatedTotalAmount - totalPaid);
   const isOverdue = totalDelayDays > 0 && remainingBalance > 0;
@@ -279,8 +285,9 @@ export function getLoanFinancialSummary(loan: Loan, todayIso: string = getTodayI
     totalOriginalAmount: loan.totalOriginalAmount,
     totalPaid,
     remainingBalance,
-    delayDays: totalDelayDays,
-    fineAmount: totalFineAccrued,
+    delayDays: remainingFine > 0 ? totalDelayDays : 0,
+    fineAmount: remainingFine, // Overdue fine remaining after payments applied to fines first
+    totalFineAccrued,
     updatedTotalAmount,
     isOverdue,
     isPaid: false,
