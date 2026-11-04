@@ -10,11 +10,12 @@
     },
     "settings": {
       ".read": "auth != null",
-      ".write": "auth != null && auth.token.email === 'edinelsonept@gmail.com'"
+      ".write": "auth != null && (auth.token.role === 'admin' || auth.token.admin === true || auth.token.email === 'admin@credicontrol.com')"
     },
     "audit_logs": {
-      ".read": "auth != null && auth.token.email === 'edinelsonept@gmail.com'",
+      ".read": "auth != null && (auth.token.role === 'admin' || auth.token.admin === true || auth.token.email === 'admin@credicontrol.com')",
       ".write": "auth != null"
     }
+
   }
 }

@@ -46,7 +46,7 @@ export const FirebaseSyncBanner: React.FC<FirebaseSyncBannerProps> = ({
   const [isRetrying, setIsRetrying] = useState<boolean>(false);
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
 
-  const projectId = (firebaseConfig as any).projectId || 'credicontrol-8315e';
+  const projectId = (firebaseConfig as any).projectId || 'credicontrol-53d11';
 
   const handleCopy = (snippet: string) => {
     navigator.clipboard.writeText(snippet);

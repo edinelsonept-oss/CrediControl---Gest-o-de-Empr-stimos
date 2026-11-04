@@ -99,7 +99,7 @@ export function scrubSensitiveFields(obj: any): any {
     return obj.map((item) => scrubSensitiveFields(item));
   }
 
-  const sensitiveKeys = ['password', 'senha', 'token', 'secret', 'credential', 'pin', 'apiKey'];
+  const sensitiveKeys = ['password', 'senha', 'token', 'secret', 'credential', 'pin', 'apikey', 'auth', 'privatekey'];
   const cleanObj: Record<string, any> = {};
 
   for (const [key, value] of Object.entries(obj)) {
@@ -112,6 +112,7 @@ export function scrubSensitiveFields(obj: any): any {
       cleanObj[key] = value;
     }
   }
+
 
   return cleanObj;
 }

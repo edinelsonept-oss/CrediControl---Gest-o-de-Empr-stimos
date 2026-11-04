@@ -1,5 +1,6 @@
 import { Client, Loan, SystemSettings, UserProfile, EmployeeUser } from '../types';
 import { getTodayIso, getDateOffsetIso } from '../utils/calculations';
+import { ADMIN_EMAIL } from '../config/env';
 
 export const INITIAL_EMPLOYEES: EmployeeUser[] = [
   {
@@ -12,7 +13,7 @@ export const INITIAL_EMPLOYEES: EmployeeUser[] = [
     phone: '(91) 98822-3344',
     status: 'active',
     createdAt: '2026-08-15T10:00:00.000Z',
-    createdByName: 'Edinelson (Admin)',
+    createdByName: 'Administrador',
     avatarUrl: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
   },
   {
@@ -25,7 +26,7 @@ export const INITIAL_EMPLOYEES: EmployeeUser[] = [
     phone: '(91) 98711-5566',
     status: 'active',
     createdAt: '2026-08-20T14:30:00.000Z',
-    createdByName: 'Edinelson (Admin)',
+    createdByName: 'Administrador',
     avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
   },
 ];
@@ -33,11 +34,12 @@ export const INITIAL_EMPLOYEES: EmployeeUser[] = [
 export const INITIAL_USER_PROFILES: UserProfile[] = [
   {
     id: 'user_admin',
-    name: 'Edinelson (Admin)',
-    email: 'edinelsonept@gmail.com',
+    name: 'Administrador',
+    email: ADMIN_EMAIL,
     role: 'admin',
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
   },
+
   {
     id: 'user_employee',
     name: 'Mariana Silva (Cobradora)',
@@ -63,12 +65,12 @@ export const INITIAL_CLIENTS: Client[] = [
   {
     id: 'cli_1',
     fullName: 'João Pedro Santos',
-    cpf: '123.456.789-01',
+    cpf: '000.000.001-91',
     rg: '9876543-PA',
     birthDate: '1988-05-14',
     phone: '(91) 98111-2233',
     whatsapp: '5591981112233',
-    email: 'joao.santos@gmail.com',
+    email: 'joao.santos@exemplo.com',
     address: {
       cep: '68721-000',
       street: 'Av. Beira Mar',
@@ -116,12 +118,12 @@ export const INITIAL_CLIENTS: Client[] = [
   {
     id: 'cli_2',
     fullName: 'Ana Clara Oliveira',
-    cpf: '234.567.890-12',
+    cpf: '000.000.002-72',
     rg: '8765432-PA',
     birthDate: '1992-11-20',
     phone: '(91) 99222-3344',
     whatsapp: '5591992223344',
-    email: 'ana.oliveira@outlook.com',
+    email: 'ana.oliveira@exemplo.com',
     address: {
       cep: '68721-000',
       street: 'Rua Dr. Miguel de Santa Brígida',
@@ -160,12 +162,12 @@ export const INITIAL_CLIENTS: Client[] = [
   {
     id: 'cli_3',
     fullName: 'Roberto Ferreira Gomes',
-    cpf: '345.678.901-23',
+    cpf: '000.000.003-53',
     rg: '7654321-PA',
     birthDate: '1982-03-08',
     phone: '(91) 98333-4455',
     whatsapp: '5591983334455',
-    email: 'roberto.gomes@gmail.com',
+    email: 'roberto.gomes@exemplo.com',
     address: {
       cep: '68721-000',
       street: 'Av. Dr. Fernando Guilhon',
@@ -204,12 +206,13 @@ export const INITIAL_CLIENTS: Client[] = [
   {
     id: 'cli_4',
     fullName: 'Camila Rodrigues Mendes',
-    cpf: '456.789.012-34',
+    cpf: '000.000.004-34',
     rg: '6543210-PA',
     birthDate: '1995-08-30',
     phone: '(91) 99444-5566',
     whatsapp: '5591994445566',
-    email: 'camila.mendes@hotmail.com',
+    email: 'camila.mendes@exemplo.com',
+
     address: {
       cep: '68721-000',
       street: 'Praia do Maçarico',

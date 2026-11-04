@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { EmployeeUser } from '../types';
+import { ADMIN_EMAIL } from '../config/env';
 
 export const EmployeesView: React.FC = () => {
   const {
@@ -116,10 +117,11 @@ export const EmployeesView: React.FC = () => {
       return;
     }
 
-    if (cleanEmail === 'edinelsonept@gmail.com') {
-      setFormError('O e-mail edinelsonept@gmail.com é reservado exclusivamente para o Administrador.');
+    if (cleanEmail === ADMIN_EMAIL.toLowerCase()) {
+      setFormError(`O e-mail ${ADMIN_EMAIL} é reservado exclusivamente para o Administrador.`);
       return;
     }
+
 
     // Check duplicate email
     const duplicate = employees.find(

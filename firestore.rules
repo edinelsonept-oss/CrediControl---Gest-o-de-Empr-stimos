@@ -10,10 +10,12 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && (
-        request.auth.token.email == 'edinelsonept@gmail.com' ||
-        (request.auth.token.role != null && request.auth.token.role == 'admin')
+        request.auth.token.admin == true ||
+        request.auth.token.role == 'admin' ||
+        (request.auth.token.email != null && request.auth.token.email == 'admin@credicontrol.com')
       );
     }
+
 
     // Clients Collection: Authenticated read/write, deletion restricted to Admin
     match /clients/{clientId} {

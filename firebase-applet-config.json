@@ -1,12 +1,11 @@
 {
-  "projectId": "credicontrol-8315e",
-  "appId": "1:734811568414:web:a3c647049eec49ff1b710f",
-  "apiKey": "AIzaSyA-HQcIND39ox7bQuy4e4RPtk3vXhpPfWA",
-  "authDomain": "credicontrol-8315e.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-credicontrolgest-1b35079c-48d6-486c-b59e-21d376b619f7",
-  "storageBucket": "credicontrol-8315e.firebasestorage.app",
-  "messagingSenderId": "734811568414",
-  "measurementId": "",
-  "oAuthClientId": "734811568414-1h9bak4iueqmp2lt46a9qvrug1fuia53.apps.googleusercontent.com",
+  "projectId": "credicontrol-53d11",
+  "appId": "1:643123818211:web:3f08b8122bc996facddfd6",
+  "apiKey": "AIzaSyBOj_9vi1xFgz6pOAZouO146T9cd9Wafj0",
+  "authDomain": "credicontrol-53d11.firebaseapp.com",
+  "storageBucket": "credicontrol-53d11.firebasestorage.app",
+  "messagingSenderId": "643123818211",
+  "measurementId": "G-E77538PC9D",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }

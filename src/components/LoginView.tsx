@@ -22,8 +22,7 @@ import { useApp } from '../context/AppContext';
 import { UserRole } from '../types';
 import { ForgotPasswordModal } from './ForgotPasswordModal';
 import { logAuditEvent } from '../utils/auditLogger';
-
-const ADMIN_EMAIL = ((import.meta as any).env?.VITE_ADMIN_EMAIL as string) || 'edinelsonept@gmail.com';
+import { ADMIN_EMAIL } from '../config/env';
 
 export const LoginView: React.FC = () => {
   const {
@@ -97,12 +96,13 @@ export const LoginView: React.FC = () => {
 
         const adminUser = {
           id: 'user_admin',
-          name: 'Edinelson (Admin)',
+          name: 'Administrador',
           email: ADMIN_EMAIL,
           role: 'admin' as const,
           avatarUrl:
             'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
         };
+
 
         loginWithCustomUser(adminUser);
         await logAuditEvent(adminUser, 'AUTH_LOGIN', 'auth', ADMIN_EMAIL, {
@@ -162,10 +162,11 @@ export const LoginView: React.FC = () => {
 
         loginWithCustomUser({
           id: googleUser.uid,
-          name: googleUser.displayName || 'Edinelson (Admin)',
+          name: googleUser.displayName || 'Administrador',
           email: ADMIN_EMAIL,
           role: 'admin',
           avatarUrl:
+
             googleUser.photoURL ||
             'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
         });

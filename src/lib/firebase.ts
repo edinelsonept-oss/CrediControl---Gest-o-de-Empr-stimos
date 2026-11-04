@@ -39,9 +39,8 @@ async function testConnection() {
       await getDocFromServer(doc(db, 'test', 'connection'));
     }
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
-    }
+    // When offline or before rules are published in console, fail silently without spamming console errors
+    console.warn('Firebase online connection check info:', error instanceof Error ? error.message : String(error));
   }
 }
 if (typeof window !== 'undefined') {
