@@ -342,7 +342,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return;
       }
 
-      // User authenticated, attach listeners
+      // User authenticated, attach listeners with smart bi-directional local recovery
       if (!unsubClients) {
         try {
           unsubClients = onSnapshot(
@@ -350,11 +350,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             (snapshot) => {
               setIsFirebasePermissionMissing(false);
               if (!snapshot.empty) {
-                const loadedClients: Client[] = snapshot.docs.map((d) => d.data() as Client);
-                setClients(loadedClients);
+                const remoteClients: Client[] = snapshot.docs.map((d) => d.data() as Client);
+                const remoteMap = new Map<string, Client>(remoteClients.map((c) => [c.id, c]));
+
+                setClients((prevLocal) => {
+                  // 1. Preserve locally created records that have not yet reached Firestore
+                  const pendingUploads = prevLocal.filter((local) => !remoteMap.has(local.id));
+
+                  // Push pending local records to Firestore in background
+                  if (pendingUploads.length > 0) {
+                    pendingUploads.forEach((pending) => {
+                      setDoc(doc(db, 'clients', pending.id), pending).catch((err) => {
+                        console.warn('Sync pending client recovery note:', err);
+                      });
+                    });
+                  }
+
+                  // 2. Merge: remote wins if exists, append pending local
+                  return [...remoteClients, ...pendingUploads];
+                });
               } else {
-                INITIAL_CLIENTS.forEach((c) => {
-                  setDoc(doc(db, 'clients', c.id), c).catch(() => {});
+                // If remote collection is completely empty, upload current clients (or initial seed)
+                setClients((prevLocal) => {
+                  const toUpload = prevLocal.length > 0 ? prevLocal : INITIAL_CLIENTS;
+                  toUpload.forEach((c) => {
+                    setDoc(doc(db, 'clients', c.id), c).catch(() => {});
+                  });
+                  return toUpload;
                 });
               }
             },
@@ -379,11 +401,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             (snapshot) => {
               setIsFirebasePermissionMissing(false);
               if (!snapshot.empty) {
-                const loadedLoans: Loan[] = snapshot.docs.map((d) => d.data() as Loan);
-                setLoans(loadedLoans);
+                const remoteLoans: Loan[] = snapshot.docs.map((d) => d.data() as Loan);
+                const remoteMap = new Map<string, Loan>(remoteLoans.map((l) => [l.id, l]));
+
+                setLoans((prevLocal) => {
+                  // 1. Preserve locally created loans that have not yet reached Firestore
+                  const pendingLoans = prevLocal.filter((local) => !remoteMap.has(local.id));
+
+                  if (pendingLoans.length > 0) {
+                    pendingLoans.forEach((pending) => {
+                      setDoc(doc(db, 'loans', pending.id), pending).catch((err) => {
+                        console.warn('Sync pending loan recovery note:', err);
+                      });
+                    });
+                  }
+
+                  // 2. Merge without duplicates
+                  return [...remoteLoans, ...pendingLoans];
+                });
               } else {
-                INITIAL_LOANS.forEach((l) => {
-                  setDoc(doc(db, 'loans', l.id), l).catch(() => {});
+                setLoans((prevLocal) => {
+                  const toUpload = prevLocal.length > 0 ? prevLocal : INITIAL_LOANS;
+                  toUpload.forEach((l) => {
+                    setDoc(doc(db, 'loans', l.id), l).catch(() => {});
+                  });
+                  return toUpload;
                 });
               }
             },
@@ -408,11 +450,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             (snapshot) => {
               setIsFirebasePermissionMissing(false);
               if (!snapshot.empty) {
-                const loadedEmployees: EmployeeUser[] = snapshot.docs.map((d) => d.data() as EmployeeUser);
-                setEmployees(loadedEmployees);
+                const remoteEmployees: EmployeeUser[] = snapshot.docs.map((d) => d.data() as EmployeeUser);
+                const remoteMap = new Map<string, EmployeeUser>(remoteEmployees.map((e) => [e.id, e]));
+
+                setEmployees((prevLocal) => {
+                  const pendingEmployees = prevLocal.filter((local) => !remoteMap.has(local.id));
+                  if (pendingEmployees.length > 0) {
+                    pendingEmployees.forEach((pending) => {
+                      setDoc(doc(db, 'employees', pending.id), pending).catch(() => {});
+                    });
+                  }
+                  return [...remoteEmployees, ...pendingEmployees];
+                });
               } else {
-                INITIAL_EMPLOYEES.forEach((e) => {
-                  setDoc(doc(db, 'employees', e.id), e).catch(() => {});
+                setEmployees((prevLocal) => {
+                  const toUpload = prevLocal.length > 0 ? prevLocal : INITIAL_EMPLOYEES;
+                  toUpload.forEach((e) => {
+                    setDoc(doc(db, 'employees', e.id), e).catch(() => {});
+                  });
+                  return toUpload;
                 });
               }
             },
@@ -439,7 +495,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               if (snapshot.exists()) {
                 setSettings(snapshot.data() as SystemSettings);
               } else {
-                setDoc(doc(db, 'settings', 'config'), INITIAL_SETTINGS).catch(() => {});
+                setSettings((current) => {
+                  setDoc(doc(db, 'settings', 'config'), current).catch(() => {});
+                  return current;
+                });
               }
             },
             (error) => {
@@ -455,6 +514,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           console.warn('Settings snapshot listener attach error:', err);
         }
       }
+
     });
 
     return () => {

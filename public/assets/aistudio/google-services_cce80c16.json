@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "643123818211",
+    "firebase_url": "https://credicontrol-53d11-default-rtdb.firebaseio.com",
+    "project_id": "credicontrol-53d11",
+    "storage_bucket": "credicontrol-53d11.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:643123818211:android:0da6e686fa6d51facddfd6",
+        "android_client_info": {
+          "package_name": "credicontrol_53d11.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "643123818211-kfbntd0sdmtl4l0c86gd9g4jrlnavbtl.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDgHRk2LMjI5_1aLdcPR-cgf3ROEJP08AA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "643123818211-kfbntd0sdmtl4l0c86gd9g4jrlnavbtl.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

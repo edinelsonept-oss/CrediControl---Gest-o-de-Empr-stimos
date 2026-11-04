@@ -23,11 +23,18 @@ const FIRESTORE_RULES_SNIPPET = `rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Permite leitura e escrita para todos os usuários autenticados da sua equipe
     match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Ponto de verificação de conexão
+    match /test/{testId} {
       allow read, write: if true;
     }
   }
 }`;
+
 
 const REALTIME_DB_RULES_SNIPPET = `{
   "rules": {

@@ -3,9 +3,10 @@
   "appId": "1:643123818211:web:3f08b8122bc996facddfd6",
   "apiKey": "AIzaSyBOj_9vi1xFgz6pOAZouO146T9cd9Wafj0",
   "authDomain": "credicontrol-53d11.firebaseapp.com",
+  "databaseURL": "https://credicontrol-53d11-default-rtdb.firebaseio.com",
   "storageBucket": "credicontrol-53d11.firebasestorage.app",
   "messagingSenderId": "643123818211",
   "measurementId": "G-E77538PC9D",
-  "oAuthClientId": "",
+  "oAuthClientId": "643123818211-kfbntd0sdmtl4l0c86gd9g4jrlnavbtl.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }
