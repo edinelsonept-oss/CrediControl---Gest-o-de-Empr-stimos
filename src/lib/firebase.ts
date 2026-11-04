@@ -1,7 +1,14 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc } from 'firebase/firestore';
 import { getDatabase } from 'firebase/database';
-import { getAuth } from 'firebase/auth';
+import {
+  initializeAuth,
+  getAuth,
+  indexedDBLocalPersistence,
+  browserLocalPersistence,
+  inMemoryPersistence,
+  Auth,
+} from 'firebase/auth';
 import { getAnalytics, isSupported } from 'firebase/analytics';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
@@ -29,7 +36,25 @@ export const rtdb = (firebaseConfig as any).databaseURL
   ? getDatabase(app)
   : null;
 
-export const auth = getAuth(app);
+// Initialize resilient Auth persistence
+// In sandboxed iframes or background tabs, IndexedDB may throw 'Database is closing/hidden'.
+// Fallback gracefully from IndexedDB to localStorage to inMemory.
+let authInstance: Auth;
+try {
+  authInstance = initializeAuth(app, {
+    persistence: [indexedDBLocalPersistence, browserLocalPersistence, inMemoryPersistence],
+  });
+} catch (err: any) {
+  try {
+    authInstance = getAuth(app);
+  } catch {
+    authInstance = initializeAuth(app, {
+      persistence: [browserLocalPersistence, inMemoryPersistence],
+    });
+  }
+}
+export const auth = authInstance;
+
 
 // Connection validation
 async function testConnection() {
