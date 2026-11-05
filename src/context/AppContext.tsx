@@ -223,18 +223,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState<boolean>(false);
   const [activeLoanForPayment, setActiveLoanForPayment] = useState<Loan | null>(null);
 
-  const [isFirebasePermissionMissing, setIsFirebasePermissionMissing] = useState<boolean>(false);
+  const [isFirebasePermissionMissing, setIsFirebasePermissionMissing] = useState<boolean>(() => {
+    return false;
+  });
+  const [isWarningDismissed, setIsWarningDismissed] = useState<boolean>(() => {
+    return typeof window !== 'undefined' ? sessionStorage.getItem('credicontrol_dismiss_sync_banner') === 'true' : false;
+  });
   const [retryCounter, setRetryCounter] = useState<number>(0);
 
   const dismissFirebaseWarning = () => {
     setIsFirebasePermissionMissing(false);
+    setIsWarningDismissed(true);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('credicontrol_dismiss_sync_banner', 'true');
+    }
   };
 
   const retryFirebaseConnection = () => {
     clearPermissionError();
     setIsFirebasePermissionMissing(false);
+    setIsWarningDismissed(false);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('credicontrol_dismiss_sync_banner');
+    }
     setRetryCounter((prev) => prev + 1);
   };
+
 
   // Listen for permission error broadcasts from firebase.ts
   useEffect(() => {
@@ -1234,9 +1248,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         authenticateEmployee,
         isEmployeeEmailAllowed,
         notifications,
-        isFirebasePermissionMissing,
+        isFirebasePermissionMissing: isFirebasePermissionMissing && !isWarningDismissed,
         dismissFirebaseWarning,
         retryFirebaseConnection,
+
         auditLogs,
         downloadBackup,
         restoreBackupFromFile,

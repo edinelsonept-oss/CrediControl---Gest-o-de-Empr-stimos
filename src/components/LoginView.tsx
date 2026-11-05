@@ -34,31 +34,20 @@ export const LoginView: React.FC = () => {
   } = useApp();
 
   const [selectedRole, setSelectedRole] = useState<UserRole>('admin');
-  const [email, setEmail] = useState(ADMIN_EMAIL);
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Pick first active employee email for convenience if switching to employee
-  const firstActiveEmployee = employees.find((e) => e.status === 'active') || employees[0];
-
   const handleRoleChange = (role: UserRole) => {
     setSelectedRole(role);
     setErrorMessage('');
-    if (role === 'admin') {
-      if (!email || email !== ADMIN_EMAIL) {
-        setEmail(ADMIN_EMAIL);
-        setPassword('');
-      }
-    } else {
-      if (email === ADMIN_EMAIL) {
-        setEmail(firstActiveEmployee ? firstActiveEmployee.email : '');
-        setPassword('');
-      }
-    }
+    setEmail('');
+    setPassword('');
   };
+
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,34 +64,61 @@ export const LoginView: React.FC = () => {
 
     try {
       // 1. Administrator Login Verification
-      if (cleanEmailLower === ADMIN_EMAIL.toLowerCase() || (selectedRole === 'admin' && cleanEmailLower === ADMIN_EMAIL.toLowerCase())) {
+      if (selectedRole === 'admin') {
+        if (cleanEmailLower !== ADMIN_EMAIL.toLowerCase()) {
+          setErrorMessage(`Acesso negado: O e-mail "${cleanEmail}" não possui autorização de Administrador principal.`);
+          setIsLoading(false);
+          return;
+        }
+
         try {
           await signInWithEmailAndPassword(auth, ADMIN_EMAIL, password);
         } catch (fbErr: any) {
-          if (fbErr.code === 'auth/user-not-found' || fbErr.code === 'auth/invalid-credential') {
-            try {
-              await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, password);
-            } catch {
-              setErrorMessage('Credenciais incorretas para o administrador.');
+          if (
+            fbErr.code === 'auth/user-not-found' ||
+            fbErr.code === 'auth/invalid-credential' ||
+            fbErr.code === 'auth/user-disabled'
+          ) {
+            // First-time provisioning of the primary administrator account in Firebase Auth
+            // If the user entered the designated initial password, provision the user directly
+            if (password === '@Coelho60') {
+              try {
+                await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, password);
+              } catch (createErr: any) {
+                if (createErr.code === 'auth/email-already-in-use') {
+                  setErrorMessage('Senha incorreta para o administrador principal.');
+                  setIsLoading(false);
+                  return;
+                }
+                setErrorMessage('Erro ao inicializar credenciais seguras do administrador.');
+                setIsLoading(false);
+                return;
+              }
+            } else {
+              setErrorMessage('Senha incorreta para o administrador principal.');
               setIsLoading(false);
               return;
             }
           } else if (fbErr.code === 'auth/wrong-password') {
-            setErrorMessage('Senha incorreta para o administrador.');
+            setErrorMessage('Senha incorreta para o administrador principal.');
+            setIsLoading(false);
+            return;
+          } else {
+            console.warn('Firebase admin sign in warning:', fbErr.message);
+            setErrorMessage('Credenciais incorretas ou falha de autenticação.');
             setIsLoading(false);
             return;
           }
         }
 
         const adminUser = {
-          id: 'user_admin',
-          name: 'Administrador',
+          id: auth.currentUser?.uid || 'user_admin',
+          name: 'Edinelson (Admin)',
           email: ADMIN_EMAIL,
           role: 'admin' as const,
           avatarUrl:
             'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
         };
-
 
         loginWithCustomUser(adminUser);
         await logAuditEvent(adminUser, 'AUTH_LOGIN', 'auth', ADMIN_EMAIL, {
@@ -112,6 +128,7 @@ export const LoginView: React.FC = () => {
         setIsAuthenticated(true);
         return;
       }
+
 
       // 2. Employee Login Verification (Must be created and enabled by Administrator)
       const authResult = authenticateEmployee(cleanEmail, password);
@@ -260,16 +277,6 @@ export const LoginView: React.FC = () => {
           </button>
         </div>
 
-        {/* Admin Access Indicator */}
-        {selectedRole === 'admin' && (
-          <div className="p-3 bg-[#8BCF00]/10 border border-[#8BCF00]/30 rounded-2xl flex items-center gap-2 text-xs">
-            <Sparkles className="w-4 h-4 text-[#8BCF00] shrink-0" />
-            <span className="truncate text-neutral-200">
-              E-mail do Administrador: <strong className="text-white">{ADMIN_EMAIL}</strong>
-            </span>
-          </div>
-        )}
-
         {/* Employee Admin-Created Helper Badge */}
         {selectedRole === 'employee' && (
           <div className="p-3 bg-neutral-900/90 border border-neutral-800 rounded-2xl flex items-start gap-2.5 text-xs">
@@ -304,11 +311,12 @@ export const LoginView: React.FC = () => {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder={selectedRole === 'admin' ? ADMIN_EMAIL : 'funcionario@credicontrol.com'}
+                placeholder={selectedRole === 'admin' ? 'admin@credicontrol.com' : 'funcionario@credicontrol.com'}
                 className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-white placeholder-neutral-600 outline-none transition-all"
               />
             </div>
           </div>
+
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
