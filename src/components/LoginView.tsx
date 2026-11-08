@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   User,
@@ -14,6 +14,9 @@ import {
 import {
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  browserPopupRedirectResolver,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
 } from 'firebase/auth';
@@ -158,18 +161,106 @@ export const LoginView: React.FC = () => {
     }
   };
 
+  // Process redirect result if redirected back from Google sign-in
+  useEffect(() => {
+    getRedirectResult(auth, browserPopupRedirectResolver)
+      .then(async (result) => {
+        if (!result || !result.user) return;
+        const googleUser = result.user;
+        const userGoogleEmail = (googleUser.email || '').toLowerCase();
+
+        if (selectedRole === 'admin') {
+          if (userGoogleEmail !== ADMIN_EMAIL.toLowerCase()) {
+            await auth.signOut();
+            setErrorMessage(
+              `Acesso negado: O e-mail Google "${userGoogleEmail}" não é o e-mail do Administrador (${ADMIN_EMAIL}).`
+            );
+            return;
+          }
+
+          const adminUser = {
+            id: googleUser.uid,
+            name: googleUser.displayName || 'Edinelson (Admin)',
+            email: ADMIN_EMAIL,
+            role: 'admin' as const,
+            avatarUrl:
+              googleUser.photoURL ||
+              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+          };
+          loginWithCustomUser(adminUser);
+          await logAuditEvent(adminUser, 'AUTH_LOGIN', 'auth', ADMIN_EMAIL, {
+            method: 'google_redirect',
+            role: 'admin',
+          });
+          setIsAuthenticated(true);
+        } else {
+          const check = isEmployeeEmailAllowed(userGoogleEmail);
+          if (!check.allowed) {
+            await auth.signOut();
+            setErrorMessage(
+              check.message ||
+                `Acesso não autorizado: O e-mail Google "${userGoogleEmail}" não foi cadastrado pelo administrador como funcionário.`
+            );
+            return;
+          }
+          const emp = check.employee!;
+          const empUser = {
+            id: emp.id,
+            name: emp.name,
+            email: emp.email,
+            role: 'employee' as const,
+            roleTitle: emp.roleTitle,
+            avatarUrl:
+              googleUser.photoURL ||
+              emp.avatarUrl ||
+              'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
+          };
+          loginWithCustomUser(empUser);
+          await logAuditEvent(empUser, 'AUTH_LOGIN', 'auth', emp.email, {
+            method: 'google_redirect',
+            role: 'employee',
+          });
+          setIsAuthenticated(true);
+        }
+      })
+      .catch((err) => {
+        console.warn('Google redirect result check note:', err);
+      });
+  }, [selectedRole]);
+
   const handleGoogleLogin = async () => {
     setIsLoading(true);
     setErrorMessage('');
 
     try {
       const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
+      provider.setCustomParameters({
+        prompt: 'select_account',
+      });
+
+      let result;
+      try {
+        result = await signInWithPopup(auth, provider, browserPopupRedirectResolver);
+      } catch (popupErr: any) {
+        const popupCode = popupErr?.code || '';
+        // If popup is blocked by the browser or unsupported in this frame, fallback to redirect
+        if (
+          popupCode === 'auth/popup-blocked' ||
+          popupCode === 'auth/operation-not-supported-in-this-environment'
+        ) {
+          console.info('Tentando fallback para signInWithRedirect...');
+          await signInWithRedirect(auth, provider, browserPopupRedirectResolver);
+          return;
+        }
+        throw popupErr;
+      }
+
       const googleUser = result.user;
       const userGoogleEmail = (googleUser.email || '').toLowerCase();
 
       if (selectedRole === 'admin') {
         if (userGoogleEmail && userGoogleEmail !== ADMIN_EMAIL.toLowerCase()) {
+          await auth.signOut();
           setErrorMessage(
             `Acesso negado: O e-mail Google "${userGoogleEmail}" não é o e-mail do Administrador (${ADMIN_EMAIL}).`
           );
@@ -177,21 +268,27 @@ export const LoginView: React.FC = () => {
           return;
         }
 
-        loginWithCustomUser({
+        const adminUser = {
           id: googleUser.uid,
-          name: googleUser.displayName || 'Administrador',
+          name: googleUser.displayName || 'Edinelson (Admin)',
           email: ADMIN_EMAIL,
-          role: 'admin',
+          role: 'admin' as const,
           avatarUrl:
-
             googleUser.photoURL ||
             'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+        };
+
+        loginWithCustomUser(adminUser);
+        await logAuditEvent(adminUser, 'AUTH_LOGIN', 'auth', ADMIN_EMAIL, {
+          method: 'google_popup',
+          role: 'admin',
         });
         setIsAuthenticated(true);
       } else {
         // Must be an admin-created employee email
         const check = isEmployeeEmailAllowed(userGoogleEmail);
         if (!check.allowed) {
+          await auth.signOut();
           setErrorMessage(
             check.message ||
               `Acesso não autorizado: O e-mail Google "${userGoogleEmail}" não foi cadastrado pelo administrador como funcionário.`
@@ -201,26 +298,38 @@ export const LoginView: React.FC = () => {
         }
 
         const emp = check.employee!;
-        loginWithCustomUser({
+        const empUser = {
           id: emp.id,
           name: emp.name,
           email: emp.email,
-          role: 'employee',
+          role: 'employee' as const,
           roleTitle: emp.roleTitle,
           avatarUrl:
             googleUser.photoURL ||
             emp.avatarUrl ||
             'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
+        };
+        loginWithCustomUser(empUser);
+        await logAuditEvent(empUser, 'AUTH_LOGIN', 'auth', emp.email, {
+          method: 'google_popup',
+          role: 'employee',
         });
         setIsAuthenticated(true);
       }
     } catch (err: any) {
-      console.warn('Google popup notice:', err);
-      if (err.code === 'auth/popup-closed-by-user') {
+      console.warn('Google login error notice:', err);
+      const code = err?.code || '';
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         setErrorMessage('Autenticação com Google cancelada. Por favor tente novamente ou use e-mail e senha.');
+      } else if (code === 'auth/popup-blocked') {
+        setErrorMessage('O pop-up de login foi bloqueado pelo navegador. Por favor, autorize pop-ups para esta página ou use e-mail e senha.');
+      } else if (code === 'auth/unauthorized-domain') {
+        setErrorMessage('Domínio não autorizado no Firebase Authentication. Certifique-se de adicionar o domínio nas configurações do Firebase Console.');
+      } else if (code === 'auth/operation-not-allowed') {
+        setErrorMessage('O login com Google não está ativado no Firebase Console (Authentication > Sign-in method). Ative o provedor Google.');
       } else {
         setErrorMessage(
-          'Login com Google indisponível ou não autorizado. Por favor, utilize seu e-mail e senha abaixo.'
+          err?.message || 'Erro ao realizar login com Google. Utilize seu e-mail e senha cadastrados.'
         );
       }
     } finally {

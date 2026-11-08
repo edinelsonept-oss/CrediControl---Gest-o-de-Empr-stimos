@@ -163,10 +163,15 @@ export const LoanList: React.FC = () => {
                 <tr>
                   <td colSpan={9} className="py-12 text-center text-neutral-400">
                     <Banknote className="w-10 h-10 text-neutral-600 mx-auto mb-2 opacity-50" />
-                    Nenhum contrato encontrado com os critérios de busca.
+                    <p className="text-sm font-medium">
+                      {loans.length === 0
+                        ? 'Nenhum empréstimo cadastrado.'
+                        : 'Nenhum contrato encontrado com os critérios de busca.'}
+                    </p>
                   </td>
                 </tr>
               ) : (
+
                 filteredLoans.map((loan) => {
                   const summary = getLoanFinancialSummary(loan, today, settings.defaultDailyFine);
 

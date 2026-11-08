@@ -7,6 +7,7 @@ import {
   indexedDBLocalPersistence,
   browserLocalPersistence,
   inMemoryPersistence,
+  browserPopupRedirectResolver,
   Auth,
 } from 'firebase/auth';
 import { getAnalytics, isSupported } from 'firebase/analytics';
@@ -36,13 +37,15 @@ export const rtdb = (firebaseConfig as any).databaseURL
   ? getDatabase(app)
   : null;
 
-// Initialize resilient Auth persistence
+// Initialize resilient Auth persistence with Popup/Redirect Resolver
 // In sandboxed iframes or background tabs, IndexedDB may throw 'Database is closing/hidden'.
 // Fallback gracefully from IndexedDB to localStorage to inMemory.
+// Passing browserPopupRedirectResolver is MANDATORY for signInWithPopup / signInWithRedirect.
 let authInstance: Auth;
 try {
   authInstance = initializeAuth(app, {
     persistence: [indexedDBLocalPersistence, browserLocalPersistence, inMemoryPersistence],
+    popupRedirectResolver: browserPopupRedirectResolver,
   });
 } catch (err: any) {
   try {
@@ -50,6 +53,7 @@ try {
   } catch {
     authInstance = initializeAuth(app, {
       persistence: [browserLocalPersistence, inMemoryPersistence],
+      popupRedirectResolver: browserPopupRedirectResolver,
     });
   }
 }
@@ -72,15 +76,83 @@ if (typeof window !== 'undefined') {
   testConnection();
 }
 
+// ==========================================
+// Firebase Analytics (Recurso Opcional e Resiliente)
+// ==========================================
 export let analytics: any = null;
+
+// Helper para registro seguro de eventos (no-op silencioso se Analytics estiver inativo)
+export function logAnalyticsEvent(eventName: string, eventParams?: Record<string, any>) {
+  if (analytics) {
+    import('firebase/analytics')
+      .then(({ logEvent }) => {
+        logEvent(analytics, eventName, eventParams);
+      })
+      .catch(() => {
+        // Falhas não críticas no Analytics opcional não interrompem a aplicação
+      });
+  }
+}
+
+// Inicialização única e estritamente condicional do Analytics:
+// 1. Executa apenas se houver measurementId válido (ex: "G-XXXXXXXXXX")
+// 2. Não tenta inicializar nem dispara requisições dinâmicas caso measurementId esteja ausente
+// 3. Evita mensagens repetidas no console (inicialização única protegida por flag)
+// 4. Se configurado corretamente no futuro, inicializa normalmente
 if (typeof window !== 'undefined') {
-  isSupported().then((supported) => {
-    if (supported) {
-      analytics = getAnalytics(app);
+  const globalWin = window as any;
+
+  // Previne registro duplicado do listener de rejeição não tratada
+  if (!globalWin.__CC_ANALYTICS_LISTENER_REGISTERED__) {
+    globalWin.__CC_ANALYTICS_LISTENER_REGISTERED__ = true;
+    window.addEventListener('unhandledrejection', (event) => {
+      const errorStr = String(event.reason?.message || event.reason || '');
+      // Intercepta estritamente rejeições originadas pela busca dinâmica do Analytics
+      // NUNCA intercepta ou oculta erros de Firestore, Auth ou outros serviços
+      if (
+        errorStr.includes('Analytics: Dynamic config fetch failed') ||
+        (errorStr.includes('FirebaseError') && errorStr.includes('Analytics'))
+      ) {
+        event.preventDefault();
+        analytics = null;
+      }
+    });
+  }
+
+  // Só tenta inicializar se ainda não tentou nesta sessão e se houver um measurementId configurado
+  if (!globalWin.__CC_ANALYTICS_INITIALIZED__) {
+    globalWin.__CC_ANALYTICS_INITIALIZED__ = true;
+
+    const rawMeasurementId = (firebaseConfig as any)?.measurementId;
+    const measurementId = typeof rawMeasurementId === 'string' ? rawMeasurementId.trim() : '';
+    const hasValidMeasurementId = measurementId.length > 0 && /^G-[A-Za-z0-9]+$/i.test(measurementId);
+
+    if (hasValidMeasurementId) {
+      try {
+        isSupported()
+          .then((supported) => {
+            if (supported) {
+              try {
+                analytics = getAnalytics(app);
+                console.info('Firebase Analytics inicializado com sucesso.');
+              } catch {
+                analytics = null;
+              }
+            } else {
+              analytics = null;
+            }
+          })
+          .catch(() => {
+            analytics = null;
+          });
+      } catch {
+        analytics = null;
+      }
+    } else {
+      // measurementId não configurado: Analytics permanece opcional/desabilitado sem chamadas de rede e sem poluir o console
+      analytics = null;
     }
-  }).catch((err) => {
-    console.warn('Firebase Analytics check:', err);
-  });
+  }
 }
 
 export enum OperationType {

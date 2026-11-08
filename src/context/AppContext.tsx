@@ -156,8 +156,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [loans, setLoans] = useState<Loan[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_loans`);
-    return saved ? JSON.parse(saved) : INITIAL_LOANS;
+    if (saved !== null) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        return [];
+      }
+    }
+    // Only on very first clean run if never initialized
+    const isFirstRun = localStorage.getItem(`${STORAGE_KEY}_initialized`) !== 'true';
+    if (isFirstRun) {
+      localStorage.setItem(`${STORAGE_KEY}_initialized`, 'true');
+      return INITIAL_LOANS;
+    }
+    return [];
   });
+
 
   const [employees, setEmployees] = useState<EmployeeUser[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_employees`);
@@ -367,9 +381,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 const remoteClients: Client[] = snapshot.docs.map((d) => d.data() as Client);
                 const remoteMap = new Map<string, Client>(remoteClients.map((c) => [c.id, c]));
 
+                // Retrieve set of explicitly deleted client IDs
+                const deletedIdsJson = localStorage.getItem(`${STORAGE_KEY}_deleted_clients`);
+                const deletedIds = new Set<string>(deletedIdsJson ? JSON.parse(deletedIdsJson) : []);
+
                 setClients((prevLocal) => {
-                  // 1. Preserve locally created records that have not yet reached Firestore
-                  const pendingUploads = prevLocal.filter((local) => !remoteMap.has(local.id));
+                  // Filter out any remote or local record that is marked as deleted
+                  const validRemoteClients = remoteClients.filter((c) => !deletedIds.has(c.id));
+
+                  // Preserve only pending locally created clients that have not reached Firestore AND are not deleted
+                  const pendingUploads = prevLocal.filter(
+                    (local) => !remoteMap.has(local.id) && !deletedIds.has(local.id)
+                  );
 
                   // Push pending local records to Firestore in background
                   if (pendingUploads.length > 0) {
@@ -381,17 +404,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   }
 
                   // 2. Merge: remote wins if exists, append pending local
-                  return [...remoteClients, ...pendingUploads];
+                  return [...validRemoteClients, ...pendingUploads];
                 });
               } else {
-                // If remote collection is completely empty, upload current clients (or initial seed)
-                setClients((prevLocal) => {
-                  const toUpload = prevLocal.length > 0 ? prevLocal : INITIAL_CLIENTS;
-                  toUpload.forEach((c) => {
-                    setDoc(doc(db, 'clients', c.id), c).catch(() => {});
-                  });
-                  return toUpload;
-                });
+                // If remote collection is completely empty, do NOT re-upload initial clients if they were deleted!
+                const deletedIdsJson = localStorage.getItem(`${STORAGE_KEY}_deleted_clients`);
+                const deletedIds = new Set<string>(deletedIdsJson ? JSON.parse(deletedIdsJson) : []);
+                setClients((prevLocal) => prevLocal.filter((c) => !deletedIds.has(c.id)));
               }
             },
             (error) => {
@@ -418,9 +437,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 const remoteLoans: Loan[] = snapshot.docs.map((d) => d.data() as Loan);
                 const remoteMap = new Map<string, Loan>(remoteLoans.map((l) => [l.id, l]));
 
+                // Retrieve set of explicitly deleted loan IDs
+                const deletedIdsJson = localStorage.getItem(`${STORAGE_KEY}_deleted_loans`);
+                const deletedIds = new Set<string>(deletedIdsJson ? JSON.parse(deletedIdsJson) : []);
+
                 setLoans((prevLocal) => {
-                  // 1. Preserve locally created loans that have not yet reached Firestore
-                  const pendingLoans = prevLocal.filter((local) => !remoteMap.has(local.id));
+                  // Filter out any remote or local record that is marked as deleted
+                  const validRemoteLoans = remoteLoans.filter((l) => !deletedIds.has(l.id));
+
+                  // Preserve only pending locally created loans that have not reached Firestore AND are not deleted
+                  const pendingLoans = prevLocal.filter(
+                    (local) => !remoteMap.has(local.id) && !deletedIds.has(local.id)
+                  );
 
                   if (pendingLoans.length > 0) {
                     pendingLoans.forEach((pending) => {
@@ -430,18 +458,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                     });
                   }
 
-                  // 2. Merge without duplicates
-                  return [...remoteLoans, ...pendingLoans];
+                  // Merge valid remote with pending local
+                  return [...validRemoteLoans, ...pendingLoans];
                 });
               } else {
+                // Remote collection is empty: this is a legitimate state (e.g. all loans deleted)
+                // NEVER recreate or re-upload INITIAL_LOANS! Respect the empty state.
+                const deletedIdsJson = localStorage.getItem(`${STORAGE_KEY}_deleted_loans`);
+                const deletedIds = new Set<string>(deletedIdsJson ? JSON.parse(deletedIdsJson) : []);
+
                 setLoans((prevLocal) => {
-                  const toUpload = prevLocal.length > 0 ? prevLocal : INITIAL_LOANS;
-                  toUpload.forEach((l) => {
-                    setDoc(doc(db, 'loans', l.id), l).catch(() => {});
-                  });
-                  return toUpload;
+                  // Only keep genuinely new local loans that were not marked deleted
+                  const pendingLoans = prevLocal.filter((l) => !deletedIds.has(l.id));
+                  return pendingLoans;
                 });
               }
+
             },
             (error) => {
               handleFirestoreError(error, OperationType.LIST, 'loans');
@@ -467,23 +499,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 const remoteEmployees: EmployeeUser[] = snapshot.docs.map((d) => d.data() as EmployeeUser);
                 const remoteMap = new Map<string, EmployeeUser>(remoteEmployees.map((e) => [e.id, e]));
 
+                // Retrieve set of explicitly deleted employee IDs
+                const deletedIdsJson = localStorage.getItem(`${STORAGE_KEY}_deleted_employees`);
+                const deletedIds = new Set<string>(deletedIdsJson ? JSON.parse(deletedIdsJson) : []);
+
                 setEmployees((prevLocal) => {
-                  const pendingEmployees = prevLocal.filter((local) => !remoteMap.has(local.id));
+                  const validRemoteEmployees = remoteEmployees.filter((e) => !deletedIds.has(e.id));
+                  const pendingEmployees = prevLocal.filter(
+                    (local) => !remoteMap.has(local.id) && !deletedIds.has(local.id)
+                  );
+
                   if (pendingEmployees.length > 0) {
                     pendingEmployees.forEach((pending) => {
                       setDoc(doc(db, 'employees', pending.id), pending).catch(() => {});
                     });
                   }
-                  return [...remoteEmployees, ...pendingEmployees];
+                  return [...validRemoteEmployees, ...pendingEmployees];
                 });
               } else {
-                setEmployees((prevLocal) => {
-                  const toUpload = prevLocal.length > 0 ? prevLocal : INITIAL_EMPLOYEES;
-                  toUpload.forEach((e) => {
-                    setDoc(doc(db, 'employees', e.id), e).catch(() => {});
-                  });
-                  return toUpload;
-                });
+                // If remote collection is completely empty, do NOT re-upload initial employees if they were deleted!
+                const deletedIdsJson = localStorage.getItem(`${STORAGE_KEY}_deleted_employees`);
+                const deletedIds = new Set<string>(deletedIdsJson ? JSON.parse(deletedIdsJson) : []);
+                setEmployees((prevLocal) => prevLocal.filter((e) => !deletedIds.has(e.id)));
               }
             },
             (error) => {
@@ -708,6 +745,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const target = clients.find((c) => c.id === id);
 
+    // Record in deleted tombstones to prevent snapshot or recovery resurrection
+    try {
+      const deletedIdsJson = localStorage.getItem(`${STORAGE_KEY}_deleted_clients`);
+      const deletedIds: string[] = deletedIdsJson ? JSON.parse(deletedIdsJson) : [];
+      if (!deletedIds.includes(id)) {
+        deletedIds.push(id);
+        localStorage.setItem(`${STORAGE_KEY}_deleted_clients`, JSON.stringify(deletedIds));
+      }
+    } catch {}
+
     setClients((prev) => prev.filter((c) => c.id !== id));
     if (db) {
       deleteDoc(doc(db, 'clients', id)).catch((err) =>
@@ -723,6 +770,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const remaining = prev.filter((l) => l.clientId !== id);
       const deleted = prev.filter((l) => l.clientId === id);
       deleted.forEach((l) => {
+        try {
+          const deletedLoansJson = localStorage.getItem(`${STORAGE_KEY}_deleted_loans`);
+          const deletedLoanIds: string[] = deletedLoansJson ? JSON.parse(deletedLoansJson) : [];
+          if (!deletedLoanIds.includes(l.id)) {
+            deletedLoanIds.push(l.id);
+            localStorage.setItem(`${STORAGE_KEY}_deleted_loans`, JSON.stringify(deletedLoanIds));
+          }
+        } catch {}
+
         if (db) {
           deleteDoc(doc(db, 'loans', l.id)).catch((err) =>
             handleFirestoreError(err, OperationType.DELETE, `loans/${l.id}`)
@@ -816,25 +872,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const target = loans.find((l) => l.id === id);
 
-    setLoans((prev) => prev.filter((l) => l.id !== id));
+    // 1. Permanently register ID as deleted to prevent resurrection from snapshots or offline caches
+    try {
+      const deletedJson = localStorage.getItem(`${STORAGE_KEY}_deleted_loans`);
+      const deletedArr: string[] = deletedJson ? JSON.parse(deletedJson) : [];
+      if (!deletedArr.includes(id)) {
+        deletedArr.push(id);
+        localStorage.setItem(`${STORAGE_KEY}_deleted_loans`, JSON.stringify(deletedArr));
+      }
+    } catch (e) {
+      console.warn('Error saving deleted loan id:', e);
+    }
+
+    // 2. Immediately update state and localStorage
+    setLoans((prev) => {
+      const nextLoans = prev.filter((l) => l.id !== id);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_loans`, JSON.stringify(nextLoans));
+      } catch {}
+      return nextLoans;
+    });
+
+    // 3. Remove from Cloud Firestore
     if (db) {
       deleteDoc(doc(db, 'loans', id)).catch((err) =>
         handleFirestoreError(err, OperationType.DELETE, `loans/${id}`)
       );
     }
+
+    // 4. Remove from Realtime Database if connected
     if (rtdb) {
       try {
         rtdbRemove(rtdbRef(rtdb, `loans/${id}`)).catch(() => {});
       } catch {}
     }
+
     if (selectedLoanDetail?.id === id) setSelectedLoanDetail(null);
 
-    // Audit Trail
+    // 5. Audit Trail
     logAuditEvent(currentUser, 'DELETE_LOAN', 'loan', id, {
       clientName: target?.clientName,
       principalAmount: target?.principalAmount,
     });
   };
+
 
   const registerPayment = (
     loanId: string,
@@ -1016,6 +1097,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const target = employees.find((e) => e.id === id);
 
+    // Record in deleted tombstones to prevent snapshot or recovery resurrection
+    try {
+      const deletedIdsJson = localStorage.getItem(`${STORAGE_KEY}_deleted_employees`);
+      const deletedIds: string[] = deletedIdsJson ? JSON.parse(deletedIdsJson) : [];
+      if (!deletedIds.includes(id)) {
+        deletedIds.push(id);
+        localStorage.setItem(`${STORAGE_KEY}_deleted_employees`, JSON.stringify(deletedIds));
+      }
+    } catch {}
+
     setEmployees((prev) => prev.filter((e) => e.id !== id));
     if (db) {
       deleteDoc(doc(db, 'employees', id)).catch((err) =>
@@ -1142,8 +1233,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem(`${STORAGE_KEY}_loans`);
     localStorage.removeItem(`${STORAGE_KEY}_settings`);
     localStorage.removeItem(`${STORAGE_KEY}_employees`);
+    localStorage.removeItem(`${STORAGE_KEY}_deleted_loans`);
 
     if (db) {
+
       INITIAL_CLIENTS.forEach((c) => setDoc(doc(db, 'clients', c.id), c).catch(() => {}));
       INITIAL_LOANS.forEach((l) => setDoc(doc(db, 'loans', l.id), l).catch(() => {}));
       INITIAL_EMPLOYEES.forEach((e) => setDoc(doc(db, 'employees', e.id), e).catch(() => {}));
@@ -1174,7 +1267,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Apply restored state
     setClients(backup.clients);
     setLoans(backup.loans);
+    localStorage.removeItem(`${STORAGE_KEY}_deleted_loans`);
     if (backup.settings) setSettings(backup.settings);
+
     if (backup.employees && backup.employees.length > 0) setEmployees(backup.employees);
 
     // Sync to Firestore

@@ -24,6 +24,7 @@ import {
 import { useApp } from '../context/AppContext';
 import { EmployeeUser } from '../types';
 import { ADMIN_EMAIL } from '../config/env';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 export const EmployeesView: React.FC = () => {
   const {
@@ -39,6 +40,7 @@ export const EmployeesView: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<EmployeeUser | null>(null);
+  const [employeeToDelete, setEmployeeToDelete] = useState<EmployeeUser | null>(null);
   const [visiblePasswords, setVisiblePasswords] = useState<{ [key: string]: boolean }>({});
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
@@ -165,15 +167,18 @@ export const EmployeesView: React.FC = () => {
     setIsModalOpen(false);
   };
 
-  const handleDelete = (emp: EmployeeUser) => {
-    if (
-      window.confirm(
-        `Tem certeza que deseja excluir o login de "${emp.name}" (${emp.email})? Ele perderá imediatamente o acesso ao CrediControl.`
-      )
-    ) {
-      deleteEmployee(emp.id);
-      showFeedback(`Acesso de "${emp.name}" removido do sistema.`);
-    }
+  const handleOpenDeleteModal = (emp: EmployeeUser) => {
+    setEmployeeToDelete(emp);
+  };
+
+  const handleConfirmDeleteEmployee = () => {
+    if (!employeeToDelete) return;
+    const targetId = employeeToDelete.id;
+    const targetName = employeeToDelete.name;
+
+    deleteEmployee(targetId);
+    setEmployeeToDelete(null);
+    showFeedback(`Acesso e credenciais do funcionário "${targetName}" excluídos com sucesso.`);
   };
 
   const filteredEmployees = employees.filter((emp) => {
@@ -368,7 +373,7 @@ export const EmployeesView: React.FC = () => {
               >
                 {/* Employee Header */}
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <img
                       src={
                         emp.avatarUrl ||
@@ -377,13 +382,13 @@ export const EmployeesView: React.FC = () => {
                       alt={emp.name}
                       className="w-12 h-12 rounded-2xl object-cover border border-neutral-700 shrink-0"
                     />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-bold text-white text-base truncate font-['Outfit']">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="font-bold text-white text-base truncate font-['Outfit'] max-w-[150px] sm:max-w-[200px]" title={emp.name}>
                           {emp.name}
                         </h4>
                         <span
-                          className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border uppercase tracking-wider ${
+                          className={`shrink-0 text-[10px] font-extrabold px-2 py-0.5 rounded-full border uppercase tracking-wider ${
                             isActive
                               ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                               : 'bg-red-500/10 text-red-400 border-red-500/30'
@@ -393,32 +398,35 @@ export const EmployeesView: React.FC = () => {
                         </span>
                       </div>
                       <p className="text-xs text-[#8BCF00] font-semibold flex items-center gap-1.5 mt-0.5">
-                        <Shield className="w-3.5 h-3.5" />
-                        {emp.roleTitle || 'Funcionário'}
+                        <Shield className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">{emp.roleTitle || 'Funcionário'}</span>
                       </p>
                     </div>
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0 pt-0.5">
                     <button
                       type="button"
                       onClick={() => handleOpenEditModal(emp)}
-                      title="Editar dados ou senha do funcionário"
-                      className="p-2 text-neutral-400 hover:text-[#8BCF00] hover:bg-neutral-800 rounded-xl transition-all cursor-pointer"
+                      title="Editar funcionário"
+                      aria-label="Editar funcionário"
+                      className="p-2 text-neutral-300 hover:text-white bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 rounded-xl transition-all cursor-pointer active:scale-95 flex items-center justify-center"
                     >
-                      <Edit2 className="w-4 h-4" />
+                      <Edit2 className="w-4 h-4 text-[#8BCF00]" />
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleDelete(emp)}
+                      onClick={() => handleOpenDeleteModal(emp)}
                       title="Excluir funcionário"
-                      className="p-2 text-neutral-400 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all cursor-pointer"
+                      aria-label="Excluir funcionário"
+                      className="p-2 text-[#FF3B30] hover:text-white bg-[#FF3B30]/10 hover:bg-[#FF3B30] border border-[#FF3B30]/30 hover:border-[#FF3B30] rounded-xl transition-all cursor-pointer active:scale-95 flex items-center justify-center"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
+
 
                 {/* Login Credentials Information */}
                 <div className="bg-neutral-900/90 rounded-2xl p-3.5 border border-neutral-800 space-y-2 text-xs">
@@ -665,6 +673,17 @@ export const EmployeesView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Modal de Confirmação Exclusiva para Funcionário */}
+      <ConfirmDeleteModal
+        isOpen={!!employeeToDelete}
+        onClose={() => setEmployeeToDelete(null)}
+        onConfirm={handleConfirmDeleteEmployee}
+        title="Excluir Funcionário"
+        message={`VOCÊ DESEJA EXCLUIR O ACESSO DO FUNCIONÁRIO ${employeeToDelete?.name?.toUpperCase()} (${employeeToDelete?.roleTitle || 'FUNCIONÁRIO'} - ${employeeToDelete?.email})? SE SIM CLIQUE EM (DELETAR) SE NÃO CLIQUE EM (NÃO )`}
+        confirmLabel="DELETAR"
+        cancelLabel="NÃO"
+      />
     </div>
   );
 };

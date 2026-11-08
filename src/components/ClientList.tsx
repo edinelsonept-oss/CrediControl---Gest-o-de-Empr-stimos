@@ -11,11 +11,13 @@ import {
   CheckCircle2,
   ChevronRight,
   Filter,
+  Trash2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Client } from '../types';
 import { formatCurrency, getLoanFinancialSummary } from '../utils/calculations';
 import { openWhatsAppChat } from '../utils/whatsapp';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface ClientListProps {
   onSelectClient: (client: Client) => void;
@@ -23,8 +25,9 @@ interface ClientListProps {
 }
 
 export const ClientList: React.FC<ClientListProps> = ({ onSelectClient, onEditClient }) => {
-  const { clients, loans, settings, searchQuery, setSearchQuery, setIsClientModalOpen } = useApp();
+  const { clients, loans, settings, searchQuery, setSearchQuery, setIsClientModalOpen, deleteClient, currentUser } = useApp();
   const [statusFilter, setStatusFilter] = useState<'todos' | 'em_dia' | 'em_atraso' | 'quitado'>('todos');
+  const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
 
   // Filter logic
   const filteredClients = clients.filter((client) => {
@@ -200,6 +203,17 @@ export const ClientList: React.FC<ClientListProps> = ({ onSelectClient, onEditCl
                     >
                       <MessageSquare className="w-4 h-4" />
                     </button>
+                    {currentUser.role === 'admin' && (
+                      <button
+                        type="button"
+                        onClick={() => setClientToDelete(client)}
+                        className="p-2 text-[#FF3B30] hover:text-white bg-[#FF3B30]/10 hover:bg-[#FF3B30] border border-[#FF3B30]/30 hover:border-[#FF3B30] rounded-xl transition-all cursor-pointer flex items-center justify-center"
+                        title="Excluir cliente"
+                        aria-label="Excluir cliente"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                     <button
                       onClick={() => onSelectClient(client)}
                       className="bg-neutral-800 hover:bg-[#8BCF00] text-white hover:text-black font-semibold text-xs px-3 py-2 rounded-xl transition-all flex items-center gap-1 cursor-pointer"
@@ -213,6 +227,22 @@ export const ClientList: React.FC<ClientListProps> = ({ onSelectClient, onEditCl
           })
         )}
       </div>
+
+      {/* Modal de Confirmação Exclusiva para Cliente */}
+      <ConfirmDeleteModal
+        isOpen={!!clientToDelete}
+        onClose={() => setClientToDelete(null)}
+        onConfirm={() => {
+          if (clientToDelete) {
+            deleteClient(clientToDelete.id);
+            setClientToDelete(null);
+          }
+        }}
+        title="Excluir Cliente"
+        message={`VOCÊ DESEJA EXCLUIR O CLIENTE ${clientToDelete?.fullName.toUpperCase()} E SEUS EMPRÉSTIMOS? SE SIM CLIQUE EM (DELETAR) SE NÃO CLIQUE EM (NÃO )`}
+        confirmLabel="DELETAR"
+        cancelLabel="NÃO"
+      />
     </div>
   );
 };
