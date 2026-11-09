@@ -384,7 +384,7 @@ export const EmployeesView: React.FC = () => {
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="font-bold text-white text-base truncate font-['Outfit'] max-w-[150px] sm:max-w-[200px]" title={emp.name}>
+                        <h4 className="font-bold text-white text-base font-['Outfit'] break-words" title={emp.name}>
                           {emp.name}
                         </h4>
                         <span
@@ -405,24 +405,24 @@ export const EmployeesView: React.FC = () => {
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
                       onClick={() => handleOpenEditModal(emp)}
-                      title="Editar funcionário"
-                      aria-label="Editar funcionário"
-                      className="p-2 text-neutral-300 hover:text-white bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 rounded-xl transition-all cursor-pointer active:scale-95 flex items-center justify-center"
+                      title="Editar dados do funcionário"
+                      aria-label="Editar dados do funcionário"
+                      className="p-2.5 text-neutral-300 hover:text-white bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 rounded-xl transition-all cursor-pointer active:scale-95 flex items-center justify-center shadow-xs"
                     >
                       <Edit2 className="w-4 h-4 text-[#8BCF00]" />
                     </button>
                     <button
                       type="button"
                       onClick={() => handleOpenDeleteModal(emp)}
-                      title="Excluir funcionário"
-                      aria-label="Excluir funcionário"
-                      className="p-2 text-[#FF3B30] hover:text-white bg-[#FF3B30]/10 hover:bg-[#FF3B30] border border-[#FF3B30]/30 hover:border-[#FF3B30] rounded-xl transition-all cursor-pointer active:scale-95 flex items-center justify-center"
+                      title="Excluir funcionário permanentemente"
+                      aria-label="Excluir funcionário permanentemente"
+                      className="p-2.5 text-[#FF3B30] hover:text-white bg-[#FF3B30]/10 hover:bg-[#FF3B30] border border-[#FF3B30]/30 hover:border-[#FF3B30] rounded-xl transition-all cursor-pointer active:scale-95 flex items-center justify-center shadow-xs group/del"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-4 h-4 transition-transform group-hover/del:scale-110" />
                     </button>
                   </div>
                 </div>

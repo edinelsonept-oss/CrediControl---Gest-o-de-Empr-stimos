@@ -4,7 +4,7 @@
  */
 
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { logAuditEvent } from './auditLogger';
 
 export interface MigrationStep {
@@ -17,7 +17,7 @@ export interface MigrationStep {
 export const CURRENT_SCHEMA_VERSION = 2;
 
 export async function runDatabaseMigrations(): Promise<number> {
-  if (!db) return CURRENT_SCHEMA_VERSION;
+  if (!db || !auth.currentUser) return CURRENT_SCHEMA_VERSION;
 
   try {
     const versionRef = doc(db, 'settings', 'schema_version');

@@ -330,9 +330,14 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({ client, onBa
                   <div
                     onClick={() => setPreviewDocUrl(doc.url)}
                     className="w-11 h-11 rounded-xl bg-[#8BCF00]/10 text-[#8BCF00] flex items-center justify-center shrink-0 mt-0.5 cursor-pointer overflow-hidden border border-neutral-800 hover:border-[#8BCF00]/50 transition-colors"
-                    title="Clique para ampliar"
+                    title="Clique para visualizar"
                   >
-                    {doc.url ? (
+                    {doc.fileType === 'pdf' || doc.url?.startsWith('data:application/pdf') ? (
+                      <div className="flex flex-col items-center justify-center text-red-400 font-bold text-[9px]">
+                        <FileText className="w-5 h-5 text-red-400" />
+                        <span>PDF</span>
+                      </div>
+                    ) : doc.url ? (
                       <img
                         src={doc.url}
                         alt={doc.name}
@@ -485,20 +490,58 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({ client, onBa
         </div>
       </div>
 
-      {/* Document Image Preview Modal */}
+      {/* Document Image / PDF Preview Modal */}
       {previewDocUrl && (
         <div
-          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4"
           onClick={() => setPreviewDocUrl(null)}
         >
-          <div className="relative max-w-4xl max-h-[90vh] bg-neutral-900 rounded-3xl overflow-hidden p-2">
-            <button
-              onClick={() => setPreviewDocUrl(null)}
-              className="absolute top-4 right-4 bg-black/70 text-white p-2 rounded-full hover:bg-black transition-colors"
-            >
-              ✕
-            </button>
-            <img src={previewDocUrl} alt="Documento" className="max-w-full max-h-[85vh] object-contain rounded-2xl mx-auto" />
+          <div
+            className="relative w-full max-w-4xl max-h-[92vh] bg-neutral-900 border border-neutral-800 rounded-3xl overflow-hidden p-3 sm:p-5 flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 mb-2 border-b border-neutral-800">
+              <span className="text-xs font-bold text-neutral-300 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-[#8BCF00]" /> Visualização do Documento
+              </span>
+
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewDocUrl}
+                  download="documento"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-xl flex items-center gap-1.5 transition-colors border border-neutral-700"
+                  title="Baixar arquivo"
+                >
+                  <Download className="w-3.5 h-3.5 text-[#8BCF00]" />
+                  <span>Baixar</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewDocUrl(null)}
+                  className="p-1.5 text-neutral-400 hover:text-white rounded-xl hover:bg-neutral-800 transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto flex items-center justify-center min-h-[300px]">
+              {previewDocUrl.startsWith('data:application/pdf') || previewDocUrl.endsWith('.pdf') ? (
+                <iframe
+                  src={previewDocUrl}
+                  title="Documento PDF"
+                  className="w-full h-[75vh] rounded-2xl border border-neutral-800 bg-white"
+                />
+              ) : (
+                <img
+                  src={previewDocUrl}
+                  alt="Documento"
+                  className="max-w-full max-h-[75vh] object-contain rounded-2xl mx-auto shadow-md"
+                />
+              )}
+            </div>
           </div>
         </div>
       )}

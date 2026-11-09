@@ -69,7 +69,7 @@ export const FirebaseSyncBanner: React.FC<FirebaseSyncBannerProps> = ({
         setRetryMessage('Instância do Firestore não configurada.');
         return;
       }
-      await getDocFromServer(doc(db, 'settings', 'config'));
+      await getDocFromServer(doc(db, 'test', 'connection'));
       setRetryMessage('Conexão ao Firestore restabelecida com sucesso!');
       setTimeout(() => {
         if (onRetryConnection) onRetryConnection();

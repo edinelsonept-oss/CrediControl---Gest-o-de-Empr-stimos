@@ -8,13 +8,17 @@ import {
   AlertCircle,
   FileText,
   Shield,
-  Home,
-  Sliders,
-  Sparkles,
-  Upload,
-  SwitchCamera,
   Maximize2,
   FileCheck,
+  Upload,
+  SwitchCamera,
+  Sparkles,
+  Info,
+  Lock,
+  Smartphone,
+  File as FileIcon,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { Client, ClientDocument } from '../types';
 
@@ -25,8 +29,16 @@ interface DocumentScannerModalProps {
   onSaveDocument: (newDocument: ClientDocument) => Promise<void> | void;
 }
 
-type ScanMode = 'camera' | 'preview' | 'saving';
+type ScanMode = 'camera' | 'preview';
 type FilterType = 'original' | 'document_contrast' | 'black_and_white';
+type PermissionState = 'checking' | 'prompt' | 'granted' | 'denied' | 'unsupported';
+
+interface CameraErrorInfo {
+  type: 'NotAllowedError' | 'NotFoundError' | 'NotReadableError' | 'OverconstrainedError' | 'InsecureContext' | 'Generic';
+  title: string;
+  message: string;
+  instructions: string[];
+}
 
 export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   isOpen,
@@ -36,16 +48,25 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
 }) => {
   const [mode, setMode] = useState<ScanMode>('camera');
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
-  const [cameraError, setCameraError] = useState<string | null>(null);
   const [isInitializingCamera, setIsInitializingCamera] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [permissionState, setPermissionState] = useState<PermissionState>('checking');
+  const [cameraError, setCameraError] = useState<CameraErrorInfo | null>(null);
+  const [showInstructions, setShowInstructions] = useState(false);
 
-  // Captured image state
+  // Available devices
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+
+  // Captured document state
+  const [docFileType, setDocFileType] = useState<'image' | 'pdf'>('image');
   const [rawCapturedImageUrl, setRawCapturedImageUrl] = useState<string | null>(null);
   const [processedImageUrl, setProcessedImageUrl] = useState<string | null>(null);
+  const [pdfFileInfo, setPdfFileInfo] = useState<{ name: string; sizeFormatted: string } | null>(null);
   const [rotationDegrees, setRotationDegrees] = useState<number>(0);
   const [selectedFilter, setSelectedFilter] = useState<FilterType>('original');
 
-  // Metadata state
+  // Metadata form state
   const [docType, setDocType] = useState<ClientDocument['type']>('contrato_assinado');
   const [docTitle, setDocTitle] = useState('');
   const [docNotes, setDocNotes] = useState('');
@@ -53,7 +74,8 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const fileGalleryInputRef = useRef<HTMLInputElement | null>(null);
 
   // Default document title generator
   const getDefaultTitle = useCallback((type: ClientDocument['type']) => {
@@ -74,93 +96,303 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     }
   }, [client.fullName]);
 
-  // Stop camera helper
+  // Cleanly stop any active media stream
   const stopCameraStream = useCallback(() => {
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => {
-        track.stop();
+        try {
+          track.stop();
+        } catch (_) {}
       });
       mediaStreamRef.current = null;
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsStreaming(false);
   }, []);
 
-  // Start camera stream
-  const startCameraStream = useCallback(async () => {
+  // Enumerate video devices
+  const refreshVideoDevices = useCallback(async () => {
+    try {
+      if (navigator.mediaDevices?.enumerateDevices) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter((d) => d.kind === 'videoinput');
+        setVideoDevices(videoInputs);
+      }
+    } catch (e) {
+      console.warn('enumerateDevices note:', e);
+    }
+  }, []);
+
+  // Start camera stream with progressive constraint cascade
+  const startCameraStream = useCallback(async (overrideFacingMode?: 'environment' | 'user', overrideDeviceId?: string) => {
     stopCameraStream();
     setCameraError(null);
     setIsInitializingCamera(true);
 
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Acesso à câmera não suportado neste navegador.');
-      }
+    const activeFacing = overrideFacingMode || facingMode;
+    const activeDeviceId = overrideDeviceId !== undefined ? overrideDeviceId : selectedDeviceId;
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: facingMode },
-          width: { ideal: 1920, min: 640 },
-          height: { ideal: 1080, min: 480 },
-        },
+    // 1. Verify Security Context (HTTPS / localhost)
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      setIsInitializingCamera(false);
+      setCameraError({
+        type: 'InsecureContext',
+        title: 'Ambiente Não Seguro (HTTPS Obrigatório)',
+        message: 'O acesso à câmera via navegador exige uma conexão segura HTTPS.',
+        instructions: [
+          'Acesse o sistema utilizando o protocolo seguro (https://).',
+          'Em ambientes locais de desenvolvimento, utilize http://localhost ou configure um certificado SSL.',
+          'Utilize a opção nativa "Tirar Foto (Nativo)" ou "Galeria / PDF" abaixo.',
+        ],
+      });
+      return;
+    }
+
+    // 2. Verify MediaDevices API availability
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setIsInitializingCamera(false);
+      setPermissionState('unsupported');
+      setCameraError({
+        type: 'NotFoundError',
+        title: 'Câmera Não Suportada no Navegador',
+        message: 'Este navegador não suporta a API de captura de vídeo em tempo real.',
+        instructions: [
+          'Utilize um navegador moderno e atualizado como Google Chrome, Safari, Microsoft Edge ou Firefox.',
+          'Utilize o botão "Tirar Foto (Nativo / Celular)" ou "Galeria / PDF" abaixo para capturar diretamente pelo app de câmera do seu dispositivo.',
+        ],
+      });
+      return;
+    }
+
+    // 3. Progressive Constraint Fallback Cascade to prevent OverconstrainedError
+    const constraintAttempts: MediaStreamConstraints[] = [];
+
+    if (activeDeviceId) {
+      // Direct device selection
+      constraintAttempts.push({
+        video: { deviceId: { exact: activeDeviceId } },
         audio: false,
       });
+    }
 
-      mediaStreamRef.current = stream;
+    // Attempt 1: High resolution ideal with facingMode
+    constraintAttempts.push({
+      video: {
+        facingMode: { ideal: activeFacing },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+      audio: false,
+    });
+
+    // Attempt 2: Standard resolution
+    constraintAttempts.push({
+      video: {
+        facingMode: { ideal: activeFacing },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    });
+
+    // Attempt 3: Simple facingMode
+    constraintAttempts.push({
+      video: {
+        facingMode: activeFacing,
+      },
+      audio: false,
+    });
+
+    // Attempt 4: Any available video stream
+    constraintAttempts.push({
+      video: true,
+      audio: false,
+    });
+
+    let activeStream: MediaStream | null = null;
+    let lastError: any = null;
+
+    for (const constraints of constraintAttempts) {
+      try {
+        activeStream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (activeStream) {
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        // If user actively denied, no need to attempt looser constraints
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          break;
+        }
+      }
+    }
+
+    if (activeStream) {
+      mediaStreamRef.current = activeStream;
+      setPermissionState('granted');
+      setIsStreaming(true);
+      setCameraError(null);
 
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+        videoRef.current.srcObject = activeStream;
         videoRef.current.play().catch((playErr) => {
-          console.warn('Video play warning:', playErr);
+          console.warn('Video playback warning:', playErr);
         });
       }
-      setIsInitializingCamera(false);
-    } catch (err: any) {
-      console.warn('Camera initialization error:', err);
-      let message = 'Não foi possível acessar a câmera do dispositivo.';
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        message = 'Permissão para usar a câmera foi negada. Conceda a permissão nas configurações do navegador ou utilize o envio de arquivo abaixo.';
-      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        message = 'Nenhuma câmera encontrada no dispositivo. Você pode tirar uma foto usando o seletor nativo abaixo.';
-      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-        message = 'A câmera já está sendo usada por outro aplicativo ou processo.';
-      }
-      setCameraError(message);
-      setIsInitializingCamera(false);
-    }
-  }, [facingMode, stopCameraStream]);
 
-  // Lifecycle
-  useEffect(() => {
-    if (isOpen) {
-      setMode('camera');
-      setDocType('contrato_assinado');
-      setDocTitle(getDefaultTitle('contrato_assinado'));
-      setDocNotes('');
-      setRotationDegrees(0);
-      setSelectedFilter('original');
-      setRawCapturedImageUrl(null);
-      setProcessedImageUrl(null);
-      startCameraStream();
+      await refreshVideoDevices();
+      setIsInitializingCamera(false);
+      return;
+    }
+
+    // Handle Failure Cases Gracefully
+    setIsInitializingCamera(false);
+    const errName = lastError?.name || '';
+    const errMessage = lastError?.message || '';
+    const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
+
+    if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+      setPermissionState('denied');
+      setCameraError({
+        type: 'NotAllowedError',
+        title: 'Permissão da Câmera Bloqueada ou Negada',
+        message: isInIframe
+          ? 'O acesso à câmera foi bloqueado pela política de segurança do navegador ou do contêiner. Você pode habilitar a câmera nas configurações ou usar o botão "Tirar Foto (Nativo)" abaixo.'
+          : 'A permissão para usar a câmera foi negada nas configurações do navegador.',
+        instructions: [
+          'No Google Chrome / Edge: Clique no ícone de cadeado ou controles à esquerda do endereço do site na barra superior > Permissões do Site > Ative "Câmera" > Atualize a página.',
+          'No Safari (iOS / Mac): Toque no ícone "aA" na barra de endereços > Ajustes do Site > Câmera > Selecione "Permitir".',
+          'No Android (Chrome): Toque nos 3 pontos verticais > Configurações > Configurações do site > Câmera > Permitir.',
+          'Ou clique em "Tirar Foto (Nativo / Celular)" abaixo para acionar a câmera nativa do seu celular instantaneamente, sem bloqueios.',
+        ],
+      });
+    } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+      setCameraError({
+        type: 'NotFoundError',
+        title: 'Nenhuma Câmera Encontrada',
+        message: 'Nenhum dispositivo de vídeo físico foi identificado neste computador ou celular.',
+        instructions: [
+          'Verifique se a webcam está conectada e ligada corretamente.',
+          'Se estiver no celular, você pode utilizar o botão "Tirar Foto (Nativo)" para usar o app padrão de câmera.',
+          'Ou envie o arquivo PDF ou foto já existente pela Galeria.',
+        ],
+      });
+    } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+      setCameraError({
+        type: 'NotReadableError',
+        title: 'Câmera Ocupada por Outro Aplicativo',
+        message: 'A câmera do dispositivo já está sendo utilizada por outro programa ou aba.',
+        instructions: [
+          'Feche outros aplicativos que possam estar usando a câmera (WhatsApp, Zoom, Teams, Google Meet, Skype).',
+          'Recarregue a página e tente abrir o scanner novamente.',
+        ],
+      });
+    } else if (errName === 'OverconstrainedError') {
+      setCameraError({
+        type: 'OverconstrainedError',
+        title: 'Resolução Não Suportada',
+        message: 'A câmera não atende aos parâmetros técnicos solicitados.',
+        instructions: ['Tente alternar entre a câmera frontal e traseira, ou utilize a câmera nativa.'],
+      });
     } else {
+      setCameraError({
+        type: 'Generic',
+        title: 'Falha ao Iniciar Câmera',
+        message: errMessage || 'Não foi possível estabelecer conexão com o sensor de vídeo.',
+        instructions: [
+          'Clique em "Tentar Novamente".',
+          'Caso persista, use o botão "Tirar Foto (Nativo)" ou envie o arquivo PDF pela Galeria.',
+        ],
+      });
+    }
+  }, [facingMode, selectedDeviceId, stopCameraStream, refreshVideoDevices]);
+
+  // Initial permission and device probe on modal opening
+  useEffect(() => {
+    if (!isOpen) {
       stopCameraStream();
+      return;
+    }
+
+    // Reset state for new scanning session
+    setMode('camera');
+    setDocType('contrato_assinado');
+    setDocTitle(getDefaultTitle('contrato_assinado'));
+    setDocNotes('');
+    setRotationDegrees(0);
+    setSelectedFilter('original');
+    setRawCapturedImageUrl(null);
+    setProcessedImageUrl(null);
+    setPdfFileInfo(null);
+    setDocFileType('image');
+    setCameraError(null);
+
+    let isMounted = true;
+
+    // Check navigator.permissions if supported
+    if (navigator.permissions?.query) {
+      navigator.permissions
+        .query({ name: 'camera' as any })
+        .then((status) => {
+          if (!isMounted) return;
+          if (status.state === 'granted') {
+            setPermissionState('granted');
+            // User previously granted permission: automatically stream camera
+            startCameraStream();
+          } else if (status.state === 'denied') {
+            setPermissionState('denied');
+            // Don't spam prompt, show friendly prompt with alternative buttons
+          } else {
+            setPermissionState('prompt');
+            // 'prompt': start camera stream on user action or auto-try once
+            startCameraStream();
+          }
+
+          status.onchange = () => {
+            if (!isMounted) return;
+            if (status.state === 'granted') {
+              setPermissionState('granted');
+              setCameraError(null);
+              startCameraStream();
+            } else if (status.state === 'denied') {
+              setPermissionState('denied');
+            }
+          };
+        })
+        .catch(() => {
+          // If query fails (e.g. Safari iOS), attempt stream directly
+          if (isMounted) {
+            startCameraStream();
+          }
+        });
+    } else {
+      // Safari / browsers without query support: initiate stream directly
+      startCameraStream();
     }
 
     return () => {
+      isMounted = false;
       stopCameraStream();
     };
-  }, [isOpen, startCameraStream, stopCameraStream, getDefaultTitle]);
+  }, [isOpen, getDefaultTitle, startCameraStream, stopCameraStream]);
 
-  // Update title when type changes
-  const handleTypeChange = (newType: ClientDocument['type']) => {
-    setDocType(newType);
-    setDocTitle(getDefaultTitle(newType));
+  // Toggle between environment (back) and user (front) cameras
+  const handleToggleFacingMode = () => {
+    const nextFacing = facingMode === 'environment' ? 'user' : 'environment';
+    setFacingMode(nextFacing);
+    setSelectedDeviceId('');
+    startCameraStream(nextFacing, '');
   };
 
-  // Switch between front and rear cameras
-  const handleToggleCamera = () => {
-    setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
+  // Switch to specific camera device from dropdown
+  const handleSelectDevice = (deviceId: string) => {
+    setSelectedDeviceId(deviceId);
+    startCameraStream(facingMode, deviceId);
   };
 
-  // Capture frame from video element
+  // Capture frame from active video element
   const handleCaptureSnapshot = () => {
     if (!videoRef.current) return;
 
@@ -193,22 +425,55 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
 
+    setDocFileType('image');
     setRawCapturedImageUrl(dataUrl);
     setProcessedImageUrl(dataUrl);
+    setPdfFileInfo(null);
     setRotationDegrees(0);
     setSelectedFilter('original');
     stopCameraStream();
     setMode('preview');
   };
 
-  // Fallback native photo capture / file picker
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  // Process image or PDF file selected via native camera or gallery
+  const processSelectedFile = (file: File) => {
     if (!file) return;
 
+    // 1. If PDF Document
+    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      const sizeFormatted =
+        file.size > 1024 * 1024
+          ? `${(file.size / (1024 * 1024)).toFixed(2)} MB`
+          : `${Math.round(file.size / 1024)} KB`;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const result = event.target?.result as string;
+        setDocFileType('pdf');
+        setProcessedImageUrl(result);
+        setRawCapturedImageUrl(result);
+        setPdfFileInfo({
+          name: file.name,
+          sizeFormatted,
+        });
+        // Auto-fill title from file name if user hasn't typed custom one
+        const baseName = file.name.replace(/\.[^/.]+$/, '');
+        if (baseName) {
+          setDocTitle(baseName);
+        }
+        stopCameraStream();
+        setMode('preview');
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    // 2. If Image (JPEG, PNG, WEBP, HEIC)
     const reader = new FileReader();
     reader.onload = (event) => {
       const result = event.target?.result as string;
+      setDocFileType('image');
+      setPdfFileInfo(null);
       setRawCapturedImageUrl(result);
       setProcessedImageUrl(result);
       setRotationDegrees(0);
@@ -219,9 +484,29 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     reader.readAsDataURL(file);
   };
 
+  // Native photo capture input change
+  const handleNativeCameraChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processSelectedFile(file);
+    }
+    e.target.value = '';
+  };
+
+  // Gallery / PDF file selection
+  const handleGalleryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processSelectedFile(file);
+    }
+    e.target.value = '';
+  };
+
   // Apply filters and rotations to captured photo
   const applyImageTransformations = useCallback(
     (baseImageUrl: string, filter: FilterType, rotation: number) => {
+      if (docFileType === 'pdf') return;
+
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
@@ -275,18 +560,18 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       };
       img.src = baseImageUrl;
     },
-    []
+    [docFileType]
   );
 
   const handleRotate = () => {
-    if (!rawCapturedImageUrl) return;
+    if (!rawCapturedImageUrl || docFileType === 'pdf') return;
     const nextRotation = (rotationDegrees + 90) % 360;
     setRotationDegrees(nextRotation);
     applyImageTransformations(rawCapturedImageUrl, selectedFilter, nextRotation);
   };
 
   const handleFilterChange = (filter: FilterType) => {
-    if (!rawCapturedImageUrl) return;
+    if (!rawCapturedImageUrl || docFileType === 'pdf') return;
     setSelectedFilter(filter);
     applyImageTransformations(rawCapturedImageUrl, filter, rotationDegrees);
   };
@@ -294,6 +579,8 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   const handleRetake = () => {
     setRawCapturedImageUrl(null);
     setProcessedImageUrl(null);
+    setPdfFileInfo(null);
+    setDocFileType('image');
     setRotationDegrees(0);
     setSelectedFilter('original');
     setMode('camera');
@@ -310,7 +597,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
         type: docType,
         name: docTitle.trim() || getDefaultTitle(docType),
         url: processedImageUrl,
-        fileType: 'image',
+        fileType: docFileType,
         uploadedAt: new Date().toISOString().slice(0, 10),
         notes: docNotes.trim() || undefined,
       };
@@ -350,6 +637,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             type="button"
             onClick={onClose}
             className="p-1.5 text-neutral-400 hover:text-white rounded-xl hover:bg-neutral-800 transition-colors cursor-pointer"
+            title="Fechar scanner"
           >
             <X className="w-5 h-5" />
           </button>
@@ -359,56 +647,119 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
         <div className="p-5 overflow-y-auto space-y-4 flex-1">
           {mode === 'camera' && (
             <div className="space-y-4">
-              {/* Instructions banner */}
-              <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 flex items-center justify-between text-xs text-neutral-300">
-                <span className="flex items-center gap-2">
+              {/* Top Controls: Camera selection & orientation toggle */}
+              <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2.5 text-xs text-neutral-300">
+                <span className="flex items-center gap-2 font-medium">
                   <Maximize2 className="w-4 h-4 text-[#8BCF00] shrink-0" />
-                  Alinhe o documento (Contrato, RG ou CNH) dentro da moldura abaixo.
+                  Alinhe o documento (Contrato, RG ou CNH) dentro da moldura.
                 </span>
 
-                <button
-                  type="button"
-                  onClick={handleToggleCamera}
-                  className="flex items-center gap-1.5 text-xs text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 px-2.5 py-1 rounded-lg transition-colors cursor-pointer shrink-0 ml-2"
-                  title="Alternar entre câmera traseira e frontal"
-                >
-                  <SwitchCamera className="w-3.5 h-3.5 text-[#8BCF00]" />
-                  <span>Câmera</span>
-                </button>
+                <div className="flex items-center gap-2 ml-auto">
+                  {/* Camera Device Switcher (if multiple cameras available) */}
+                  {videoDevices.length > 1 && (
+                    <select
+                      value={selectedDeviceId}
+                      onChange={(e) => handleSelectDevice(e.target.value)}
+                      className="bg-neutral-800 text-neutral-300 text-xs rounded-lg px-2.5 py-1 border border-neutral-700 outline-none cursor-pointer"
+                      title="Selecionar dispositivo de câmera"
+                    >
+                      <option value="">Câmera Padrão</option>
+                      {videoDevices.map((dev, idx) => (
+                        <option key={dev.deviceId || idx} value={dev.deviceId}>
+                          {dev.label || `Câmera ${idx + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleToggleFacingMode}
+                    className="flex items-center gap-1.5 text-xs text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700 px-2.5 py-1 rounded-lg transition-colors cursor-pointer shrink-0"
+                    title="Alternar entre câmera traseira e frontal"
+                  >
+                    <SwitchCamera className="w-3.5 h-3.5 text-[#8BCF00]" />
+                    <span>{facingMode === 'environment' ? 'Traseira' : 'Frontal'}</span>
+                  </button>
+                </div>
               </div>
 
               {/* Camera Viewport / Stream Container */}
               <div className="relative w-full bg-black rounded-2xl overflow-hidden aspect-[4/3] sm:aspect-[16/10] border-2 border-neutral-800 flex items-center justify-center shadow-inner">
                 {isInitializingCamera && (
-                  <div className="absolute inset-0 z-20 bg-neutral-950/80 flex flex-col items-center justify-center gap-3">
+                  <div className="absolute inset-0 z-20 bg-neutral-950/85 flex flex-col items-center justify-center gap-3">
                     <RefreshCw className="w-8 h-8 text-[#8BCF00] animate-spin" />
-                    <p className="text-xs text-neutral-300">Iniciando câmera do dispositivo...</p>
+                    <p className="text-xs text-neutral-300 font-medium">Iniciando câmera do dispositivo...</p>
                   </div>
                 )}
 
                 {cameraError ? (
-                  <div className="p-6 text-center space-y-3 z-10">
-                    <div className="w-12 h-12 rounded-full bg-red-500/10 text-red-400 flex items-center justify-center mx-auto">
-                      <AlertCircle className="w-6 h-6" />
+                  <div className="p-6 text-center space-y-4 z-10 max-w-lg mx-auto">
+                    <div className="w-13 h-13 rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center justify-center mx-auto shadow-lg">
+                      <Lock className="w-6 h-6" />
                     </div>
-                    <p className="text-xs text-neutral-300 max-w-sm mx-auto leading-relaxed">
-                      {cameraError}
-                    </p>
-                    <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-bold text-white font-['Outfit']">
+                        {cameraError.title}
+                      </h4>
+                      <p className="text-xs text-neutral-300 leading-relaxed">
+                        {cameraError.message}
+                      </p>
+                    </div>
+
+                    {/* Expandable Instructions */}
+                    <div className="text-left bg-neutral-900/90 rounded-2xl p-3 border border-neutral-800 space-y-2">
                       <button
                         type="button"
-                        onClick={startCameraStream}
-                        className="bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-2"
+                        onClick={() => setShowInstructions(!showInstructions)}
+                        className="w-full flex items-center justify-between text-xs font-semibold text-[#8BCF00] hover:underline cursor-pointer"
                       >
-                        <RefreshCw className="w-3.5 h-3.5 text-[#8BCF00]" /> Tentar Novamente
+                        <span className="flex items-center gap-1.5">
+                          <Info className="w-3.5 h-3.5" /> Como autorizar a câmera nas configurações
+                        </span>
+                        {showInstructions ? (
+                          <ChevronUp className="w-4 h-4" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
+                      </button>
+
+                      {showInstructions && (
+                        <ul className="text-[11px] text-neutral-300 space-y-1.5 pt-1 pl-2 list-disc list-inside border-t border-neutral-800/80">
+                          {cameraError.instructions.map((step, idx) => (
+                            <li key={idx} className="leading-normal">{step}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    {/* Action buttons when camera is blocked */}
+                    <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => startCameraStream()}
+                        className="bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all cursor-pointer flex items-center gap-2 border border-neutral-700"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 text-[#8BCF00]" /> Tentar Câmera Novamente
                       </button>
 
                       <button
                         type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="bg-[#8BCF00] hover:bg-[#9DE000] text-black text-xs font-bold px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-2"
+                        onClick={() => nativeCameraInputRef.current?.click()}
+                        className="bg-[#8BCF00] hover:bg-[#9DE000] text-black text-xs font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer flex items-center gap-2 shadow-lg shadow-[#8BCF00]/20"
+                        title="Aciona a câmera nativa do seu celular diretamente sem bloqueio"
                       >
-                        <Upload className="w-3.5 h-3.5" /> Tirar Foto / Selecionar
+                        <Smartphone className="w-3.5 h-3.5 stroke-[2.5]" /> Tirar Foto (Câmera Nativa)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => fileGalleryInputRef.current?.click()}
+                        className="bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold px-4 py-2.5 rounded-xl transition-all cursor-pointer flex items-center gap-2 border border-neutral-700"
+                        title="Enviar imagem da galeria ou documento PDF"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-[#8BCF00]" /> Galeria / PDF
                       </button>
                     </div>
                   </div>
@@ -423,58 +774,67 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                     />
 
                     {/* Scanner Alignment Frame Overlay */}
-                    <div className="absolute inset-6 sm:inset-8 border border-[#8BCF00]/50 rounded-xl pointer-events-none flex flex-col justify-between p-2">
+                    <div className="absolute inset-5 sm:inset-7 border border-[#8BCF00]/50 rounded-2xl pointer-events-none flex flex-col justify-between p-3">
                       {/* Corner Accents */}
                       <div className="flex justify-between">
-                        <div className="w-6 h-6 border-t-3 border-l-3 border-[#8BCF00] rounded-tl-lg" />
-                        <div className="w-6 h-6 border-t-3 border-r-3 border-[#8BCF00] rounded-tr-lg" />
+                        <div className="w-7 h-7 border-t-4 border-l-4 border-[#8BCF00] rounded-tl-xl" />
+                        <div className="w-7 h-7 border-t-4 border-r-4 border-[#8BCF00] rounded-tr-xl" />
                       </div>
 
                       {/* Center Scanner Watermark Guide */}
                       <div className="text-center">
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/60 text-[#8BCF00] text-[11px] font-semibold border border-[#8BCF00]/30 backdrop-blur-xs">
-                          <Sparkles className="w-3 h-3" /> Área de Captura de Documento
+                        <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black/60 text-[#8BCF00] text-xs font-semibold border border-[#8BCF00]/30 backdrop-blur-md">
+                          <Sparkles className="w-3.5 h-3.5" /> Área de Captura de Documento
                         </div>
                       </div>
 
                       <div className="flex justify-between">
-                        <div className="w-6 h-6 border-b-3 border-l-3 border-[#8BCF00] rounded-bl-lg" />
-                        <div className="w-6 h-6 border-b-3 border-r-3 border-[#8BCF00] rounded-br-lg" />
+                        <div className="w-7 h-7 border-b-4 border-l-4 border-[#8BCF00] rounded-bl-xl" />
+                        <div className="w-7 h-7 border-b-4 border-r-4 border-[#8BCF00] rounded-br-xl" />
                       </div>
                     </div>
                   </>
                 )}
               </div>
 
-                {/* Shutter / Capture Button Controls */}
-              <div className="flex items-center justify-center gap-4 pt-2">
-                {/* Fallback upload input hidden */}
+              {/* Shutter / Capture Button Controls */}
+              <div className="flex items-center justify-center gap-3 pt-1 flex-wrap">
+                {/* 1. Direct native camera capture (zero permissions required on Android/iOS) */}
                 <input
-                  ref={fileInputRef}
+                  ref={nativeCameraInputRef}
                   type="file"
                   accept="image/*"
                   capture="environment"
-                  onChange={handleFileInputChange}
+                  onChange={handleNativeCameraChange}
+                  className="hidden"
+                />
+
+                {/* 2. Gallery / File System picker (Images & PDF) */}
+                <input
+                  ref={fileGalleryInputRef}
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={handleGalleryChange}
                   className="hidden"
                 />
 
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-semibold px-3.5 py-2.5 rounded-xl border border-neutral-700 transition-all flex items-center gap-2 cursor-pointer"
-                  title="Tirar foto usando app de câmera nativo ou selecionar da galeria"
+                  onClick={() => nativeCameraInputRef.current?.click()}
+                  className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white text-xs font-semibold px-3.5 py-2.5 rounded-xl border border-neutral-700 transition-all flex items-center gap-2 cursor-pointer shadow-xs"
+                  title="Abrir aplicativo de câmera nativo do celular"
                 >
-                  <Upload className="w-4 h-4 text-[#8BCF00]" />
-                  <span>Galeria / Nativo</span>
+                  <Smartphone className="w-4 h-4 text-[#8BCF00]" />
+                  <span>Câmera Nativa</span>
                 </button>
 
-                {/* Big Shutter Trigger Button */}
-                {!cameraError && (
+                {/* Big Central Shutter Trigger Button (when streaming) */}
+                {!cameraError && isStreaming && (
                   <button
                     type="button"
                     onClick={handleCaptureSnapshot}
                     disabled={isInitializingCamera}
-                    className="w-16 h-16 rounded-full bg-[#8BCF00] hover:bg-[#9DE000] text-black flex items-center justify-center shadow-lg shadow-[#8BCF00]/30 transition-transform active:scale-95 cursor-pointer disabled:opacity-50"
+                    className="w-16 h-16 rounded-full bg-[#8BCF00] hover:bg-[#9DE000] text-black flex items-center justify-center shadow-xl shadow-[#8BCF00]/30 transition-transform active:scale-95 cursor-pointer disabled:opacity-50"
                     title="Capturar foto do documento"
                   >
                     <div className="w-13 h-13 rounded-full border-2 border-black flex items-center justify-center">
@@ -485,75 +845,96 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={handleToggleCamera}
-                  disabled={!!cameraError}
-                  className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-semibold px-3.5 py-2.5 rounded-xl border border-neutral-700 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-40"
-                  title="Trocar câmera"
+                  onClick={() => fileGalleryInputRef.current?.click()}
+                  className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white text-xs font-semibold px-3.5 py-2.5 rounded-xl border border-neutral-700 transition-all flex items-center gap-2 cursor-pointer shadow-xs"
+                  title="Selecionar foto da galeria ou arquivo em PDF"
                 >
-                  <SwitchCamera className="w-4 h-4 text-[#8BCF00]" />
-                  <span>Trocar Câmera</span>
+                  <Upload className="w-4 h-4 text-[#8BCF00]" />
+                  <span>Galeria / PDF</span>
                 </button>
               </div>
             </div>
           )}
 
+          {/* Mode: Preview & Metadata Editing */}
           {mode === 'preview' && processedImageUrl && (
             <div className="space-y-4">
-              {/* Captured Photo Viewport with rotation & filter options */}
+              {/* Document Display Viewport */}
               <div className="relative w-full bg-neutral-950 rounded-2xl overflow-hidden aspect-[4/3] sm:aspect-[16/10] border border-neutral-800 flex items-center justify-center shadow-inner">
-                <img
-                  src={processedImageUrl}
-                  alt="Documento capturado"
-                  className="max-w-full max-h-full object-contain"
-                />
-
-                <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2 pointer-events-auto">
-                  {/* Rotate Button */}
-                  <button
-                    type="button"
-                    onClick={handleRotate}
-                    className="bg-black/80 hover:bg-black text-white text-xs font-semibold px-3 py-1.5 rounded-xl border border-neutral-700 backdrop-blur-xs flex items-center gap-1.5 cursor-pointer shadow-md transition-all"
-                  >
-                    <RotateCw className="w-3.5 h-3.5 text-[#8BCF00]" /> Girar 90°
-                  </button>
-
-                  {/* Filter Pills */}
-                  <div className="flex items-center gap-1 bg-black/80 p-1 rounded-xl border border-neutral-700 backdrop-blur-xs shadow-md">
-                    <button
-                      type="button"
-                      onClick={() => handleFilterChange('original')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
-                        selectedFilter === 'original'
-                          ? 'bg-[#8BCF00] text-black'
-                          : 'text-neutral-400 hover:text-white'
-                      }`}
-                    >
-                      Original
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleFilterChange('document_contrast')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
-                        selectedFilter === 'document_contrast'
-                          ? 'bg-[#8BCF00] text-black'
-                          : 'text-neutral-400 hover:text-white'
-                      }`}
-                    >
-                      Realce
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleFilterChange('black_and_white')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
-                        selectedFilter === 'black_and_white'
-                          ? 'bg-[#8BCF00] text-black'
-                          : 'text-neutral-400 hover:text-white'
-                      }`}
-                    >
-                      P&B Scanner
-                    </button>
+                {docFileType === 'pdf' ? (
+                  <div className="text-center p-6 space-y-3">
+                    <div className="w-16 h-16 rounded-2xl bg-red-500/10 text-red-400 border border-red-500/30 flex items-center justify-center mx-auto shadow-md">
+                      <FileIcon className="w-8 h-8" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-red-500/20 text-red-400 uppercase tracking-wider">
+                        Documento PDF
+                      </span>
+                      <p className="text-sm font-bold text-white mt-1.5 truncate max-w-sm mx-auto">
+                        {pdfFileInfo?.name || 'Documento.pdf'}
+                      </p>
+                      <p className="text-xs text-neutral-400 mt-0.5">
+                        Tamanho: {pdfFileInfo?.sizeFormatted || 'Arquivo carregado'}
+                      </p>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <img
+                      src={processedImageUrl}
+                      alt="Documento capturado"
+                      className="max-w-full max-h-full object-contain"
+                    />
+
+                    {/* Image Controls: Rotate & Filters */}
+                    <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2 pointer-events-auto">
+                      <button
+                        type="button"
+                        onClick={handleRotate}
+                        className="bg-black/80 hover:bg-black text-white text-xs font-semibold px-3 py-1.5 rounded-xl border border-neutral-700 backdrop-blur-xs flex items-center gap-1.5 cursor-pointer shadow-md transition-all"
+                        title="Girar 90 graus"
+                      >
+                        <RotateCw className="w-3.5 h-3.5 text-[#8BCF00]" /> Girar 90°
+                      </button>
+
+                      <div className="flex items-center gap-1 bg-black/80 p-1 rounded-xl border border-neutral-700 backdrop-blur-xs shadow-md">
+                        <button
+                          type="button"
+                          onClick={() => handleFilterChange('original')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                            selectedFilter === 'original'
+                              ? 'bg-[#8BCF00] text-black'
+                              : 'text-neutral-400 hover:text-white'
+                          }`}
+                        >
+                          Original
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleFilterChange('document_contrast')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                            selectedFilter === 'document_contrast'
+                              ? 'bg-[#8BCF00] text-black'
+                              : 'text-neutral-400 hover:text-white'
+                          }`}
+                        >
+                          Realce
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleFilterChange('black_and_white')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                            selectedFilter === 'black_and_white'
+                              ? 'bg-[#8BCF00] text-black'
+                              : 'text-neutral-400 hover:text-white'
+                          }`}
+                        >
+                          P&B Scanner
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Form to Categorize and Name Document */}
@@ -567,7 +948,13 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                     </label>
                     <select
                       value={docType}
-                      onChange={(e) => handleTypeChange(e.target.value as ClientDocument['type'])}
+                      onChange={(e) => {
+                        const newType = e.target.value as ClientDocument['type'];
+                        setDocType(newType);
+                        if (!pdfFileInfo) {
+                          setDocTitle(getDefaultTitle(newType));
+                        }
+                      }}
                       className="w-full bg-neutral-950 border border-neutral-800 focus:border-[#8BCF00] rounded-xl px-3 py-2 text-xs text-white outline-none"
                     >
                       <option value="contrato_assinado">Contrato Assinado</option>
@@ -638,7 +1025,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
               >
                 <RefreshCw className="w-3.5 h-3.5 text-[#8BCF00]" />
-                Tirar Outra Foto
+                Tirar Outra Foto / Trocar Arquivo
               </button>
 
               <button

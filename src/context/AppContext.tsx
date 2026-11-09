@@ -224,6 +224,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logout = () => {
     setIsAuthenticated(false);
     localStorage.removeItem(`${STORAGE_KEY}_auth`);
+    if (auth.currentUser) {
+      auth.signOut().catch(() => {});
+    }
   };
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -357,12 +360,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    // 2. Cloud Firestore listeners (with auth state check)
+    // 2. Cloud Firestore listeners (strictly guarded by authenticated state)
     const unsubAuth = onAuthStateChanged(auth, (user) => {
+      // If user is unauthenticated or logged out, detach all Firestore listeners cleanly
       if (!user) {
-        signInAnonymously(auth).catch((err) => {
-          console.warn('Anonymous auth signin note:', err);
-        });
+        if (unsubClients) {
+          try { unsubClients(); } catch (_) {}
+          unsubClients = null;
+        }
+        if (unsubLoans) {
+          try { unsubLoans(); } catch (_) {}
+          unsubLoans = null;
+        }
+        if (unsubEmployees) {
+          try { unsubEmployees(); } catch (_) {}
+          unsubEmployees = null;
+        }
+        if (unsubSettings) {
+          try { unsubSettings(); } catch (_) {}
+          unsubSettings = null;
+        }
         return;
       }
 
@@ -395,7 +412,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   );
 
                   // Push pending local records to Firestore in background
-                  if (pendingUploads.length > 0) {
+                  if (pendingUploads.length > 0 && auth.currentUser) {
                     pendingUploads.forEach((pending) => {
                       setDoc(doc(db, 'clients', pending.id), pending).catch((err) => {
                         console.warn('Sync pending client recovery note:', err);
@@ -414,8 +431,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               }
             },
             (error) => {
-              handleFirestoreError(error, OperationType.LIST, 'clients');
-              setIsFirebasePermissionMissing(true);
+              if (auth.currentUser) {
+                handleFirestoreError(error, OperationType.LIST, 'clients');
+                setIsFirebasePermissionMissing(true);
+              }
               if (unsubClients) {
                 try { unsubClients(); } catch (_) {}
                 unsubClients = null;
@@ -450,7 +469,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                     (local) => !remoteMap.has(local.id) && !deletedIds.has(local.id)
                   );
 
-                  if (pendingLoans.length > 0) {
+                  if (pendingLoans.length > 0 && auth.currentUser) {
                     pendingLoans.forEach((pending) => {
                       setDoc(doc(db, 'loans', pending.id), pending).catch((err) => {
                         console.warn('Sync pending loan recovery note:', err);
@@ -463,12 +482,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 });
               } else {
                 // Remote collection is empty: this is a legitimate state (e.g. all loans deleted)
-                // NEVER recreate or re-upload INITIAL_LOANS! Respect the empty state.
                 const deletedIdsJson = localStorage.getItem(`${STORAGE_KEY}_deleted_loans`);
                 const deletedIds = new Set<string>(deletedIdsJson ? JSON.parse(deletedIdsJson) : []);
 
                 setLoans((prevLocal) => {
-                  // Only keep genuinely new local loans that were not marked deleted
                   const pendingLoans = prevLocal.filter((l) => !deletedIds.has(l.id));
                   return pendingLoans;
                 });
@@ -476,8 +493,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
             },
             (error) => {
-              handleFirestoreError(error, OperationType.LIST, 'loans');
-              setIsFirebasePermissionMissing(true);
+              if (auth.currentUser) {
+                handleFirestoreError(error, OperationType.LIST, 'loans');
+                setIsFirebasePermissionMissing(true);
+              }
               if (unsubLoans) {
                 try { unsubLoans(); } catch (_) {}
                 unsubLoans = null;
@@ -509,7 +528,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                     (local) => !remoteMap.has(local.id) && !deletedIds.has(local.id)
                   );
 
-                  if (pendingEmployees.length > 0) {
+                  if (pendingEmployees.length > 0 && auth.currentUser) {
                     pendingEmployees.forEach((pending) => {
                       setDoc(doc(db, 'employees', pending.id), pending).catch(() => {});
                     });
@@ -517,15 +536,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   return [...validRemoteEmployees, ...pendingEmployees];
                 });
               } else {
-                // If remote collection is completely empty, do NOT re-upload initial employees if they were deleted!
                 const deletedIdsJson = localStorage.getItem(`${STORAGE_KEY}_deleted_employees`);
                 const deletedIds = new Set<string>(deletedIdsJson ? JSON.parse(deletedIdsJson) : []);
                 setEmployees((prevLocal) => prevLocal.filter((e) => !deletedIds.has(e.id)));
               }
             },
             (error) => {
-              handleFirestoreError(error, OperationType.LIST, 'employees');
-              setIsFirebasePermissionMissing(true);
+              if (auth.currentUser) {
+                handleFirestoreError(error, OperationType.LIST, 'employees');
+                setIsFirebasePermissionMissing(true);
+              }
               if (unsubEmployees) {
                 try { unsubEmployees(); } catch (_) {}
                 unsubEmployees = null;
@@ -546,15 +566,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               if (snapshot.exists()) {
                 setSettings(snapshot.data() as SystemSettings);
               } else {
-                setSettings((current) => {
-                  setDoc(doc(db, 'settings', 'config'), current).catch(() => {});
-                  return current;
-                });
+                if (auth.currentUser) {
+                  setSettings((current) => {
+                    setDoc(doc(db, 'settings', 'config'), current).catch(() => {});
+                    return current;
+                  });
+                }
               }
             },
             (error) => {
-              handleFirestoreError(error, OperationType.GET, 'settings/config');
-              setIsFirebasePermissionMissing(true);
+              if (auth.currentUser) {
+                handleFirestoreError(error, OperationType.GET, 'settings/config');
+                setIsFirebasePermissionMissing(true);
+              }
               if (unsubSettings) {
                 try { unsubSettings(); } catch (_) {}
                 unsubSettings = null;
@@ -677,7 +701,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newClient: Client = valResult.sanitizedData!;
 
     setClients((prev) => [newClient, ...prev]);
-    if (db) {
+    if (db && auth.currentUser) {
       setDoc(doc(db, 'clients', newClient.id), newClient).catch((err) =>
         handleFirestoreError(err, OperationType.WRITE, `clients/${newClient.id}`)
       );
@@ -712,7 +736,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setClients((prev) => {
       const updated = prev.map((c) => (c.id === id ? sanitized : c));
-      if (db) {
+      if (db && auth.currentUser) {
         setDoc(doc(db, 'clients', id), sanitized).catch((err) =>
           handleFirestoreError(err, OperationType.WRITE, `clients/${id}`)
         );
@@ -756,7 +780,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
 
     setClients((prev) => prev.filter((c) => c.id !== id));
-    if (db) {
+    if (db && auth.currentUser) {
       deleteDoc(doc(db, 'clients', id)).catch((err) =>
         handleFirestoreError(err, OperationType.DELETE, `clients/${id}`)
       );
@@ -779,7 +803,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         } catch {}
 
-        if (db) {
+        if (db && auth.currentUser) {
           deleteDoc(doc(db, 'loans', l.id)).catch((err) =>
             handleFirestoreError(err, OperationType.DELETE, `loans/${l.id}`)
           );
@@ -811,7 +835,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newLoan: Loan = valResult.sanitizedData!;
 
     setLoans((prev) => [newLoan, ...prev]);
-    if (db) {
+    if (db && auth.currentUser) {
       setDoc(doc(db, 'loans', newLoan.id), newLoan).catch((err) =>
         handleFirestoreError(err, OperationType.WRITE, `loans/${newLoan.id}`)
       );
@@ -840,7 +864,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const updated = prev.map((l) => (l.id === id ? { ...l, ...loanData } : l));
       const target = updated.find((l) => l.id === id);
       if (target) {
-        if (db) {
+        if (db && auth.currentUser) {
           setDoc(doc(db, 'loans', id), target).catch((err) =>
             handleFirestoreError(err, OperationType.WRITE, `loans/${id}`)
           );
@@ -894,7 +918,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     // 3. Remove from Cloud Firestore
-    if (db) {
+    if (db && auth.currentUser) {
       deleteDoc(doc(db, 'loans', id)).catch((err) =>
         handleFirestoreError(err, OperationType.DELETE, `loans/${id}`)
       );
@@ -1002,7 +1026,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setSettings((prev) => {
       const updated = { ...prev, ...newSettings };
-      if (db) {
+      if (db && auth.currentUser) {
         setDoc(doc(db, 'settings', 'config'), updated).catch((err) =>
           handleFirestoreError(err, OperationType.WRITE, 'settings/config')
         );
@@ -1039,7 +1063,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setEmployees((prev) => [newEmployee, ...prev]);
 
-    if (db) {
+    if (db && auth.currentUser) {
       setDoc(doc(db, 'employees', newEmployee.id), newEmployee).catch((err) =>
         handleFirestoreError(err, OperationType.WRITE, `employees/${newEmployee.id}`)
       );
@@ -1070,7 +1094,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const updated = prev.map((e) => (e.id === id ? { ...e, ...employeeData } : e));
       const target = updated.find((e) => e.id === id);
       if (target) {
-        if (db) {
+        if (db && auth.currentUser) {
           setDoc(doc(db, 'employees', id), target).catch((err) =>
             handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
           );
@@ -1108,7 +1132,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
 
     setEmployees((prev) => prev.filter((e) => e.id !== id));
-    if (db) {
+    if (db && auth.currentUser) {
       deleteDoc(doc(db, 'employees', id)).catch((err) =>
         handleFirestoreError(err, OperationType.DELETE, `employees/${id}`)
       );
@@ -1140,7 +1164,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       const target = updated.find((e) => e.id === id);
       if (target) {
-        if (db) {
+        if (db && auth.currentUser) {
           setDoc(doc(db, 'employees', id), target).catch((err) =>
             handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
           );
