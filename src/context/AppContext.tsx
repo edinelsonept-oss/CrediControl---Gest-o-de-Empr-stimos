@@ -23,6 +23,8 @@ import {
   SystemSettings,
   UserProfile,
   EmployeeUser,
+  EmployeeNotification,
+  EmployeeStatus,
   FilterStatus,
   PaymentRecord,
   NotificationAlert,
@@ -76,14 +78,34 @@ interface AppContextType {
   loginWithCustomUser: (user: UserProfile) => void;
   logout: () => void;
 
-  // Employees Management (Created and controlled by Admin)
+  // Employees Management (Created, registered and controlled by Admin)
   employees: EmployeeUser[];
+  employeeNotifications: EmployeeNotification[];
   addEmployee: (employeeData: Omit<EmployeeUser, 'id' | 'createdAt' | 'createdByName'>) => EmployeeUser;
+  registerEmployeeApplication: (data: {
+    name: string;
+    email: string;
+    phone?: string;
+    cpf?: string;
+    address?: string;
+    city?: string;
+    birthDate?: string;
+    avatarUrl?: string;
+    registrationMethod: 'google' | 'email_password';
+    password?: string;
+  }) => Promise<{ success: boolean; employee: EmployeeUser; message: string }>;
+  approveEmployee: (id: string) => Promise<void>;
+  denyEmployee: (id: string, reason?: string) => Promise<void>;
+  suspendEmployee: (id: string, reason?: string) => Promise<void>;
   updateEmployee: (id: string, employeeData: Partial<EmployeeUser>) => void;
   deleteEmployee: (id: string) => void;
   toggleEmployeeStatus: (id: string) => void;
-  authenticateEmployee: (email: string, password: string) => { success: boolean; message?: string; user?: UserProfile };
+  authenticateEmployee: (email: string, password: string) => { success: boolean; message?: string; user?: UserProfile; employee?: EmployeeUser };
   isEmployeeEmailAllowed: (email: string) => { allowed: boolean; employee?: EmployeeUser; message?: string };
+  markNotificationAsRead: (id: string) => Promise<void>;
+  markAllNotificationsAsRead: () => Promise<void>;
+  suspendedSessionAlert: { title: string; message: string; reason?: string; type: 'suspended' | 'denied' } | null;
+  clearSuspendedSessionAlert: () => void;
 
   // Actions
   setCurrentUserRole: (role: 'admin' | 'employee') => void;
@@ -183,6 +205,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   });
 
+  const [employeeNotifications, setEmployeeNotifications] = useState<EmployeeNotification[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_employee_notifications`);
+    if (!saved) return [];
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return [];
+    }
+  });
+
+  const [suspendedSessionAlert, setSuspendedSessionAlert] = useState<{
+    title: string;
+    message: string;
+    reason?: string;
+    type: 'suspended' | 'denied';
+  } | null>(null);
+
+  const clearSuspendedSessionAlert = () => {
+    setSuspendedSessionAlert(null);
+  };
+
   const [settings, setSettings] = useState<SystemSettings>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_settings`);
     if (!saved) return INITIAL_SETTINGS;
@@ -281,6 +324,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let unsubLoans: (() => void) | null = null;
     let unsubEmployees: (() => void) | null = null;
     let unsubSettings: (() => void) | null = null;
+    let unsubEmployeeNotifs: (() => void) | null = null;
 
     // 1. Realtime Database listeners (if databaseURL is configured)
     if (rtdb) {
@@ -379,6 +423,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (unsubSettings) {
           try { unsubSettings(); } catch (_) {}
           unsubSettings = null;
+        }
+        if (unsubEmployeeNotifs) {
+          try { unsubEmployeeNotifs(); } catch (_) {}
+          unsubEmployeeNotifs = null;
         }
         return;
       }
@@ -590,6 +638,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
 
+      if (!unsubEmployeeNotifs) {
+        try {
+          unsubEmployeeNotifs = onSnapshot(
+            collection(db, 'employee_notifications'),
+            (snapshot) => {
+              if (!snapshot.empty) {
+                const remoteNotifs: EmployeeNotification[] = snapshot.docs.map(
+                  (d) => d.data() as EmployeeNotification
+                );
+                // Sort newest first
+                remoteNotifs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+                setEmployeeNotifications(remoteNotifs);
+              }
+            },
+            (error) => {
+              if (auth.currentUser) {
+                handleFirestoreError(error, OperationType.LIST, 'employee_notifications');
+              }
+              if (unsubEmployeeNotifs) {
+                try { unsubEmployeeNotifs(); } catch (_) {}
+                unsubEmployeeNotifs = null;
+              }
+            }
+          );
+        } catch (err) {
+          console.warn('Employee notifications snapshot attach note:', err);
+        }
+      }
+
     });
 
     return () => {
@@ -598,6 +675,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (unsubLoans) unsubLoans();
       if (unsubEmployees) unsubEmployees();
       if (unsubSettings) unsubSettings();
+      if (unsubEmployeeNotifs) unsubEmployeeNotifs();
     };
   }, [retryCounter]);
 
@@ -615,6 +693,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [employees]);
 
   useEffect(() => {
+    localStorage.setItem(`${STORAGE_KEY}_employee_notifications`, JSON.stringify(employeeNotifications));
+  }, [employeeNotifications]);
+
+  useEffect(() => {
     localStorage.setItem(`${STORAGE_KEY}_settings`, JSON.stringify(settings));
     if (settings.theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -622,6 +704,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       document.documentElement.classList.remove('dark');
     }
   }, [settings]);
+
+  // Real-time Employee Session & Access Revocation Watcher
+  // Enforces requirement 8: "Garantir que uma suspensão bloqueie também sessões já autenticadas, sem depender apenas de um novo login."
+  useEffect(() => {
+    if (!isAuthenticated || currentUser.role !== 'employee') return;
+
+    const currentEmp = employees.find(
+      (e) => e.id === currentUser.id || e.email.toLowerCase() === currentUser.email.toLowerCase()
+    );
+
+    if (currentEmp) {
+      if (currentEmp.status === 'suspended' || currentEmp.status === 'inactive') {
+        setSuspendedSessionAlert({
+          title: 'ACESSO SUSPENSO',
+          message: 'Seu acesso ao CrediControl foi temporariamente suspenso pelo administrador. No momento, você não poderá utilizar as funcionalidades do sistema.',
+          reason: currentEmp.decisionReason,
+          type: 'suspended',
+        });
+        setIsAuthenticated(false);
+        localStorage.removeItem(`${STORAGE_KEY}_auth`);
+        if (auth.currentUser) {
+          auth.signOut().catch(() => {});
+        }
+      } else if (currentEmp.status === 'denied') {
+        setSuspendedSessionAlert({
+          title: 'ACESSO NÃO AUTORIZADO',
+          message: 'Infelizmente, sua solicitação de acesso ao CrediControl não foi aprovada pelo administrador. Você não possui autorização para acessar o sistema neste momento.',
+          reason: currentEmp.decisionReason,
+          type: 'denied',
+        });
+        setIsAuthenticated(false);
+        localStorage.removeItem(`${STORAGE_KEY}_auth`);
+        if (auth.currentUser) {
+          auth.signOut().catch(() => {});
+        }
+      }
+    }
+  }, [employees, currentUser, isAuthenticated]);
 
   // Compute notifications dynamically
   const today = getTodayIso();
@@ -1179,10 +1299,293 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  // Register Employee Application (Self-Registration via Email/Password or Google)
+  const registerEmployeeApplication = async (data: {
+    name: string;
+    email: string;
+    phone?: string;
+    cpf?: string;
+    address?: string;
+    city?: string;
+    birthDate?: string;
+    avatarUrl?: string;
+    registrationMethod: 'google' | 'email_password';
+    password?: string;
+  }): Promise<{ success: boolean; employee: EmployeeUser; message: string }> => {
+    const cleanEmail = data.email.trim().toLowerCase();
+    const cleanName = data.name.trim();
+
+    // Check if employee already exists to avoid duplicates
+    const existing = employees.find((e) => e.email.trim().toLowerCase() === cleanEmail);
+    if (existing) {
+      return {
+        success: false,
+        employee: existing,
+        message: `Já existe um cadastro com o e-mail "${cleanEmail}". Situação atual: ${existing.status.toUpperCase()}.`,
+      };
+    }
+
+    const newEmp: EmployeeUser = {
+      id: `emp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      name: cleanName,
+      email: cleanEmail,
+      phone: data.phone?.trim() || 'Não informado',
+      cpf: data.cpf?.trim() || 'Não informado',
+      address: data.address?.trim() || 'Não informado',
+      city: data.city?.trim() || 'Não informado',
+      birthDate: data.birthDate?.trim() || 'Não informado',
+      avatarUrl:
+        data.avatarUrl ||
+        'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
+      registrationMethod: data.registrationMethod,
+      password: data.password ? data.password.trim() : undefined,
+      role: 'employee',
+      roleTitle: 'Colaborador',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      createdByName: 'Auto-cadastro (' + (data.registrationMethod === 'google' ? 'Google' : 'E-mail/Senha') + ')',
+    };
+
+    setEmployees((prev) => [newEmp, ...prev]);
+
+    if (db) {
+      setDoc(doc(db, 'employees', newEmp.id), newEmp).catch((err) => {
+        console.warn('Firestore employee registration note:', err);
+      });
+    }
+
+    logAuditEvent(
+      { id: newEmp.id, name: newEmp.name, email: newEmp.email, role: 'employee' },
+      'EMPLOYEE_REGISTER',
+      'employee',
+      newEmp.id,
+      {
+        name: newEmp.name,
+        email: newEmp.email,
+        method: data.registrationMethod,
+        status: 'pending',
+      }
+    );
+
+    return {
+      success: true,
+      employee: newEmp,
+      message:
+        'Seu cadastro foi recebido e está aguardando aprovação do administrador. Você receberá uma notificação assim que houver uma decisão.',
+    };
+  };
+
+  // Administrator Action: A) PERMITIR ACESSO
+  const approveEmployee = async (id: string) => {
+    if (currentUser.role !== 'admin') {
+      alert('Apenas o Administrador pode aprovar cadastros.');
+      return;
+    }
+
+    const target = employees.find((e) => e.id === id);
+    if (!target) return;
+
+    const previousStatus = target.status;
+    const nowIso = new Date().toISOString();
+    const decidedByStr = `${currentUser.name} (${currentUser.email})`;
+
+    const updatedEmployee: EmployeeUser = {
+      ...target,
+      status: 'approved',
+      decidedBy: decidedByStr,
+      decidedAt: nowIso,
+      decisionReason: undefined,
+    };
+
+    setEmployees((prev) => prev.map((e) => (e.id === id ? updatedEmployee : e)));
+
+    if (db && auth.currentUser) {
+      setDoc(doc(db, 'employees', id), updatedEmployee).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
+      );
+    }
+
+    // Automatic notification for employee
+    const notif: EmployeeNotification = {
+      id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      employeeId: target.id,
+      employeeEmail: target.email,
+      title: 'ACESSO APROVADO!',
+      message:
+        'Parabéns! Seu cadastro no CrediControl foi aprovado pelo administrador. Seu acesso ao sistema foi liberado. Agora você já pode entrar e utilizar as funcionalidades disponíveis para o seu perfil.',
+      type: 'approval',
+      createdAt: nowIso,
+      read: false,
+      actionLabel: 'ENTRAR NO SISTEMA',
+    };
+
+    setEmployeeNotifications((prev) => [notif, ...prev]);
+
+    if (db && auth.currentUser) {
+      setDoc(doc(db, 'employee_notifications', notif.id), notif).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `employee_notifications/${notif.id}`)
+      );
+    }
+
+    logAuditEvent(currentUser, 'EMPLOYEE_APPROVED', 'employee', id, {
+      employeeName: target.name,
+      employeeEmail: target.email,
+      previousStatus,
+      newStatus: 'approved',
+      admin: decidedByStr,
+    });
+  };
+
+  // Administrator Action: B) NEGAR ACESSO
+  const denyEmployee = async (id: string, reason?: string) => {
+    if (currentUser.role !== 'admin') {
+      alert('Apenas o Administrador pode negar acessos.');
+      return;
+    }
+
+    const target = employees.find((e) => e.id === id);
+    if (!target) return;
+
+    const previousStatus = target.status;
+    const nowIso = new Date().toISOString();
+    const decidedByStr = `${currentUser.name} (${currentUser.email})`;
+    const cleanReason = reason?.trim() || '';
+
+    const updatedEmployee: EmployeeUser = {
+      ...target,
+      status: 'denied',
+      decidedBy: decidedByStr,
+      decidedAt: nowIso,
+      decisionReason: cleanReason || undefined,
+    };
+
+    setEmployees((prev) => prev.map((e) => (e.id === id ? updatedEmployee : e)));
+
+    if (db && auth.currentUser) {
+      setDoc(doc(db, 'employees', id), updatedEmployee).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
+      );
+    }
+
+    // Automatic notification for employee
+    const notif: EmployeeNotification = {
+      id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      employeeId: target.id,
+      employeeEmail: target.email,
+      title: 'ACESSO NÃO AUTORIZADO',
+      message:
+        'Infelizmente, sua solicitação de acesso ao CrediControl não foi aprovada pelo administrador. Você não possui autorização para acessar o sistema neste momento.',
+      reason: cleanReason || undefined,
+      type: 'rejection',
+      createdAt: nowIso,
+      read: false,
+    };
+
+    setEmployeeNotifications((prev) => [notif, ...prev]);
+
+    if (db && auth.currentUser) {
+      setDoc(doc(db, 'employee_notifications', notif.id), notif).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `employee_notifications/${notif.id}`)
+      );
+    }
+
+    logAuditEvent(currentUser, 'EMPLOYEE_DENIED', 'employee', id, {
+      employeeName: target.name,
+      employeeEmail: target.email,
+      previousStatus,
+      newStatus: 'denied',
+      reason: cleanReason,
+      admin: decidedByStr,
+    });
+  };
+
+  // Administrator Action: C) SUSPENDER ACESSO
+  const suspendEmployee = async (id: string, reason?: string) => {
+    if (currentUser.role !== 'admin') {
+      alert('Apenas o Administrador pode suspender acessos.');
+      return;
+    }
+
+    const target = employees.find((e) => e.id === id);
+    if (!target) return;
+
+    const previousStatus = target.status;
+    const nowIso = new Date().toISOString();
+    const decidedByStr = `${currentUser.name} (${currentUser.email})`;
+    const cleanReason = reason?.trim() || '';
+
+    const updatedEmployee: EmployeeUser = {
+      ...target,
+      status: 'suspended',
+      decidedBy: decidedByStr,
+      decidedAt: nowIso,
+      decisionReason: cleanReason || undefined,
+    };
+
+    setEmployees((prev) => prev.map((e) => (e.id === id ? updatedEmployee : e)));
+
+    if (db && auth.currentUser) {
+      setDoc(doc(db, 'employees', id), updatedEmployee).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
+      );
+    }
+
+    // Automatic notification for employee
+    const notif: EmployeeNotification = {
+      id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      employeeId: target.id,
+      employeeEmail: target.email,
+      title: 'ACESSO SUSPENSO',
+      message:
+        'Seu acesso ao CrediControl foi temporariamente suspenso pelo administrador. No momento, você não poderá utilizar as funcionalidades do sistema.',
+      reason: cleanReason || undefined,
+      type: 'suspension',
+      createdAt: nowIso,
+      read: false,
+    };
+
+    setEmployeeNotifications((prev) => [notif, ...prev]);
+
+    if (db && auth.currentUser) {
+      setDoc(doc(db, 'employee_notifications', notif.id), notif).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `employee_notifications/${notif.id}`)
+      );
+    }
+
+    logAuditEvent(currentUser, 'EMPLOYEE_SUSPENDED', 'employee', id, {
+      employeeName: target.name,
+      employeeEmail: target.email,
+      previousStatus,
+      newStatus: 'suspended',
+      reason: cleanReason,
+      admin: decidedByStr,
+    });
+  };
+
+  const markNotificationAsRead = async (id: string) => {
+    setEmployeeNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+    );
+    if (db && auth.currentUser) {
+      setDoc(doc(db, 'employee_notifications', id), { read: true }, { merge: true }).catch(() => {});
+    }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    setEmployeeNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    if (db && auth.currentUser) {
+      employeeNotifications.forEach((n) => {
+        if (!n.read) {
+          setDoc(doc(db, 'employee_notifications', n.id), { read: true }, { merge: true }).catch(() => {});
+        }
+      });
+    }
+  };
+
   const authenticateEmployee = (
     inputEmail: string,
     inputPassword: string
-  ): { success: boolean; message?: string; user?: UserProfile } => {
+  ): { success: boolean; message?: string; user?: UserProfile; employee?: EmployeeUser } => {
     const cleanEmail = inputEmail.trim().toLowerCase();
     const cleanPass = inputPassword.trim();
 
@@ -1191,21 +1594,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!employee) {
       return {
         success: false,
-        message: 'Acesso negado: Este e-mail de funcionário não foi cadastrado pelo administrador. Solicite que o administrador crie seu login no sistema.',
+        message: 'Acesso não localizado: Este e-mail não possui cadastro no CrediControl. Solicite seu cadastro ou cadastre-se para aprovação.',
       };
     }
 
-    if (employee.status === 'inactive') {
+    if (employee.status === 'pending') {
       return {
         success: false,
-        message: 'Acesso bloqueado: Este usuário de funcionário está inativo ou foi desativado pelo administrador.',
+        message: 'PENDING',
+        employee,
       };
     }
 
-    if (employee.password !== cleanPass) {
+    if (employee.status === 'denied') {
+      return {
+        success: false,
+        message: 'DENIED',
+        employee,
+      };
+    }
+
+    if (employee.status === 'suspended' || employee.status === 'inactive') {
+      return {
+        success: false,
+        message: 'SUSPENDED',
+        employee,
+      };
+    }
+
+    // Only approved/active status reaches password verification
+    if (employee.password && employee.password !== cleanPass) {
       return {
         success: false,
         message: 'Senha incorreta para este funcionário.',
+        employee,
       };
     }
 
@@ -1214,13 +1636,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       name: employee.name,
       email: employee.email,
       role: 'employee',
-      avatarUrl: employee.avatarUrl || 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
+      avatarUrl:
+        employee.avatarUrl ||
+        'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
       roleTitle: employee.roleTitle,
     };
 
     return {
       success: true,
       user: userProfile,
+      employee,
     };
   };
 
@@ -1233,15 +1658,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!employee) {
       return {
         allowed: false,
-        message: 'Acesso não autorizado: O e-mail não possui cadastro de funcionário criado pelo administrador.',
+        message: 'NOT_FOUND',
       };
     }
 
-    if (employee.status === 'inactive') {
+    if (employee.status === 'pending') {
       return {
         allowed: false,
         employee,
-        message: 'Acesso bloqueado: O cadastro deste funcionário foi inativado pelo administrador.',
+        message: 'PENDING',
+      };
+    }
+
+    if (employee.status === 'denied') {
+      return {
+        allowed: false,
+        employee,
+        message: 'DENIED',
+      };
+    }
+
+    if (employee.status === 'suspended' || employee.status === 'inactive') {
+      return {
+        allowed: false,
+        employee,
+        message: 'SUSPENDED',
       };
     }
 
@@ -1360,12 +1801,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateSettings,
         resetToSampleData,
         employees,
+        employeeNotifications,
         addEmployee,
+        registerEmployeeApplication,
+        approveEmployee,
+        denyEmployee,
+        suspendEmployee,
         updateEmployee,
         deleteEmployee,
         toggleEmployeeStatus,
         authenticateEmployee,
         isEmployeeEmailAllowed,
+        markNotificationAsRead,
+        markAllNotificationsAsRead,
+        suspendedSessionAlert,
+        clearSuspendedSessionAlert,
         notifications,
         isFirebasePermissionMissing: isFirebasePermissionMissing && !isWarningDismissed,
         dismissFirebaseWarning,

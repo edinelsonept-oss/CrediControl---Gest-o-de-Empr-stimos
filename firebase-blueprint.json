@@ -40,7 +40,7 @@
     },
     "Employee": {
       "title": "Employee",
-      "description": "Employee user account created by Administrator",
+      "description": "Employee user account and registration applications",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -48,10 +48,38 @@
         "email": { "type": "string" },
         "role": { "type": "string" },
         "roleTitle": { "type": "string" },
+        "phone": { "type": "string" },
+        "cpf": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "birthDate": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "registrationMethod": { "type": "string" },
         "status": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "createdAt": { "type": "string" },
+        "decisionReason": { "type": "string" },
+        "decidedBy": { "type": "string" },
+        "decidedAt": { "type": "string" }
       },
-      "required": ["name", "email", "role", "status"]
+      "required": ["name", "email", "status"]
+    },
+    "EmployeeNotification": {
+      "title": "EmployeeNotification",
+      "description": "System and administrative notification for employees",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeEmail": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string" },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "read": { "type": "boolean" },
+        "actionLabel": { "type": "string" }
+      },
+      "required": ["employeeId", "title", "message", "type", "createdAt"]
     },
     "AuditLog": {
       "title": "AuditLog",
@@ -83,6 +111,10 @@
     "employees": {
       "schema": { "$ref": "#/entities/Employee" },
       "description": "Collection of employee users created by administrator"
+    },
+    "employee_notifications": {
+      "schema": { "$ref": "#/entities/EmployeeNotification" },
+      "description": "Collection of in-app notifications sent to employees regarding their approval status"
     },
     "settings": {
       "schema": { "$ref": "#/entities/Settings" },

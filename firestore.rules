@@ -35,10 +35,19 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Employees Collection: Only Admin can create, modify, or delete employee credentials
+    // Employees Collection: Authenticated read/create (for new registration requests); only Admin can approve, deny, suspend, modify, or delete
     match /employees/{employeeId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin();
+    }
+
+    // Employee Notifications: Authenticated read/create/update (mark as read); deletion restricted to Admin
+    match /employee_notifications/{notificationId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
     }
 
     // Settings Collection: Read-only for employees; updates restricted to Admin

@@ -9,18 +9,41 @@ export interface UserProfile {
   roleTitle?: string;
 }
 
+export type EmployeeStatus = 'pending' | 'approved' | 'denied' | 'suspended' | 'active' | 'inactive';
+
 export interface EmployeeUser {
   id: string;
   name: string;
   email: string;
-  password: string; // Senha cadastrada pelo administrador
+  password?: string; // Senha cadastrada (criptografada ou hash para segurança)
   role: 'employee';
-  roleTitle: string; // Ex: 'Cobrador(a)', 'Operador(a) Financeiro', 'Atendente'
+  roleTitle: string; // Ex: 'Cobrador(a)', 'Operador(a) Financeiro', 'Colaborador'
   phone?: string;
-  status: 'active' | 'inactive';
+  cpf?: string;
+  address?: string;
+  city?: string;
+  birthDate?: string;
+  status: EmployeeStatus;
   createdAt: string;
-  createdByName: string; // Ex: 'Edinelson (Admin)'
+  createdByName?: string; // Ex: 'Edinelson (Admin)' ou 'Auto-cadastro'
   avatarUrl?: string;
+  registrationMethod?: 'google' | 'email_password';
+  decisionReason?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+}
+
+export interface EmployeeNotification {
+  id: string;
+  employeeId: string;
+  employeeEmail: string;
+  title: string;
+  message: string;
+  type: 'approval' | 'rejection' | 'suspension' | 'info';
+  reason?: string;
+  createdAt: string;
+  read: boolean;
+  actionLabel?: string;
 }
 
 export interface ClientDocument {
@@ -154,6 +177,11 @@ export type AuditAction =
   | 'CREATE_EMPLOYEE'
   | 'UPDATE_EMPLOYEE'
   | 'DELETE_EMPLOYEE'
+  | 'EMPLOYEE_REGISTER'
+  | 'EMPLOYEE_APPROVED'
+  | 'EMPLOYEE_DENIED'
+  | 'EMPLOYEE_SUSPENDED'
+  | 'EMPLOYEE_REACTIVATED'
   | 'AUTH_LOGIN'
   | 'AUTH_LOGOUT'
   | 'DATABASE_BACKUP'
