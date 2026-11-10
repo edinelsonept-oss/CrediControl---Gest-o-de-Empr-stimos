@@ -47,6 +47,33 @@ import { logAuditEvent, getLocalAuditLogs } from '../utils/auditLogger';
 import { executeAtomicPayment } from '../utils/financialTransactions';
 import { generateDatabaseBackup, validateBackupFile } from '../utils/backupService';
 import { runDatabaseMigrations } from '../utils/dbMigrations';
+/**
+ * Recursively strips undefined values so Cloud Firestore setDoc never throws
+ * "Unsupported field value: undefined"
+ */
+function cleanFirestoreData<T extends Record<string, any>>(obj: T): T {
+  if (obj === null || obj === undefined) return obj;
+  if (Array.isArray(obj)) {
+    return (obj as any[]).map((item) =>
+      typeof item === 'object' && item !== null ? cleanFirestoreData(item) : item
+    ) as unknown as T;
+  }
+  const clean: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        clean[key] = cleanFirestoreData(value);
+      } else if (Array.isArray(value)) {
+        clean[key] = (value as any[]).map((item) =>
+          typeof item === 'object' && item !== null ? cleanFirestoreData(item) : item
+        );
+      } else {
+        clean[key] = value;
+      }
+    }
+  }
+  return clean;
+}
 
 interface AppContextType {
   clients: Client[];
@@ -578,7 +605,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
                   if (pendingEmployees.length > 0 && auth.currentUser) {
                     pendingEmployees.forEach((pending) => {
-                      setDoc(doc(db, 'employees', pending.id), pending).catch(() => {});
+                      setDoc(doc(db, 'employees', pending.id), cleanFirestoreData(pending)).catch(() => {});
                     });
                   }
                   return [...validRemoteEmployees, ...pendingEmployees];
@@ -1184,7 +1211,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setEmployees((prev) => [newEmployee, ...prev]);
 
     if (db && auth.currentUser) {
-      setDoc(doc(db, 'employees', newEmployee.id), newEmployee).catch((err) =>
+      setDoc(doc(db, 'employees', newEmployee.id), cleanFirestoreData(newEmployee)).catch((err) =>
         handleFirestoreError(err, OperationType.WRITE, `employees/${newEmployee.id}`)
       );
     }
@@ -1215,7 +1242,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const target = updated.find((e) => e.id === id);
       if (target) {
         if (db && auth.currentUser) {
-          setDoc(doc(db, 'employees', id), target).catch((err) =>
+          setDoc(doc(db, 'employees', id), cleanFirestoreData(target)).catch((err) =>
             handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
           );
         }
@@ -1285,7 +1312,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const target = updated.find((e) => e.id === id);
       if (target) {
         if (db && auth.currentUser) {
-          setDoc(doc(db, 'employees', id), target).catch((err) =>
+          setDoc(doc(db, 'employees', id), cleanFirestoreData(target)).catch((err) =>
             handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
           );
         }
@@ -1349,7 +1376,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setEmployees((prev) => [newEmp, ...prev]);
 
     if (db) {
-      setDoc(doc(db, 'employees', newEmp.id), newEmp).catch((err) => {
+      setDoc(doc(db, 'employees', newEmp.id), cleanFirestoreData(newEmp)).catch((err) => {
         console.warn('Firestore employee registration note:', err);
       });
     }
@@ -1394,13 +1421,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: 'approved',
       decidedBy: decidedByStr,
       decidedAt: nowIso,
-      decisionReason: undefined,
     };
+    delete (updatedEmployee as any).decisionReason;
 
     setEmployees((prev) => prev.map((e) => (e.id === id ? updatedEmployee : e)));
 
     if (db && auth.currentUser) {
-      setDoc(doc(db, 'employees', id), updatedEmployee).catch((err) =>
+      setDoc(doc(db, 'employees', id), cleanFirestoreData(updatedEmployee)).catch((err) =>
         handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
       );
     }
@@ -1422,7 +1449,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setEmployeeNotifications((prev) => [notif, ...prev]);
 
     if (db && auth.currentUser) {
-      setDoc(doc(db, 'employee_notifications', notif.id), notif).catch((err) =>
+      setDoc(doc(db, 'employee_notifications', notif.id), cleanFirestoreData(notif)).catch((err) =>
         handleFirestoreError(err, OperationType.WRITE, `employee_notifications/${notif.id}`)
       );
     }
@@ -1449,20 +1476,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const previousStatus = target.status;
     const nowIso = new Date().toISOString();
     const decidedByStr = `${currentUser.name} (${currentUser.email})`;
-    const cleanReason = reason?.trim() || '';
+    const cleanReason = reason?.trim();
 
     const updatedEmployee: EmployeeUser = {
       ...target,
       status: 'denied',
       decidedBy: decidedByStr,
       decidedAt: nowIso,
-      decisionReason: cleanReason || undefined,
+      ...(cleanReason ? { decisionReason: cleanReason } : {}),
     };
+    if (!cleanReason) {
+      delete (updatedEmployee as any).decisionReason;
+    }
 
     setEmployees((prev) => prev.map((e) => (e.id === id ? updatedEmployee : e)));
 
     if (db && auth.currentUser) {
-      setDoc(doc(db, 'employees', id), updatedEmployee).catch((err) =>
+      setDoc(doc(db, 'employees', id), cleanFirestoreData(updatedEmployee)).catch((err) =>
         handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
       );
     }
@@ -1475,16 +1505,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       title: 'ACESSO NÃO AUTORIZADO',
       message:
         'Infelizmente, sua solicitação de acesso ao CrediControl não foi aprovada pelo administrador. Você não possui autorização para acessar o sistema neste momento.',
-      reason: cleanReason || undefined,
       type: 'rejection',
       createdAt: nowIso,
       read: false,
+      ...(cleanReason ? { reason: cleanReason } : {}),
     };
 
     setEmployeeNotifications((prev) => [notif, ...prev]);
 
     if (db && auth.currentUser) {
-      setDoc(doc(db, 'employee_notifications', notif.id), notif).catch((err) =>
+      setDoc(doc(db, 'employee_notifications', notif.id), cleanFirestoreData(notif)).catch((err) =>
         handleFirestoreError(err, OperationType.WRITE, `employee_notifications/${notif.id}`)
       );
     }
@@ -1494,7 +1524,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       employeeEmail: target.email,
       previousStatus,
       newStatus: 'denied',
-      reason: cleanReason,
+      reason: cleanReason || 'Não informado',
       admin: decidedByStr,
     });
   };
@@ -1512,20 +1542,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const previousStatus = target.status;
     const nowIso = new Date().toISOString();
     const decidedByStr = `${currentUser.name} (${currentUser.email})`;
-    const cleanReason = reason?.trim() || '';
+    const cleanReason = reason?.trim();
 
     const updatedEmployee: EmployeeUser = {
       ...target,
       status: 'suspended',
       decidedBy: decidedByStr,
       decidedAt: nowIso,
-      decisionReason: cleanReason || undefined,
+      ...(cleanReason ? { decisionReason: cleanReason } : {}),
     };
+    if (!cleanReason) {
+      delete (updatedEmployee as any).decisionReason;
+    }
 
     setEmployees((prev) => prev.map((e) => (e.id === id ? updatedEmployee : e)));
 
     if (db && auth.currentUser) {
-      setDoc(doc(db, 'employees', id), updatedEmployee).catch((err) =>
+      setDoc(doc(db, 'employees', id), cleanFirestoreData(updatedEmployee)).catch((err) =>
         handleFirestoreError(err, OperationType.WRITE, `employees/${id}`)
       );
     }
@@ -1538,16 +1571,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       title: 'ACESSO SUSPENSO',
       message:
         'Seu acesso ao CrediControl foi temporariamente suspenso pelo administrador. No momento, você não poderá utilizar as funcionalidades do sistema.',
-      reason: cleanReason || undefined,
       type: 'suspension',
       createdAt: nowIso,
       read: false,
+      ...(cleanReason ? { reason: cleanReason } : {}),
     };
 
     setEmployeeNotifications((prev) => [notif, ...prev]);
 
     if (db && auth.currentUser) {
-      setDoc(doc(db, 'employee_notifications', notif.id), notif).catch((err) =>
+      setDoc(doc(db, 'employee_notifications', notif.id), cleanFirestoreData(notif)).catch((err) =>
         handleFirestoreError(err, OperationType.WRITE, `employee_notifications/${notif.id}`)
       );
     }

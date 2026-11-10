@@ -103,6 +103,7 @@ export function scrubSensitiveFields(obj: any): any {
   const cleanObj: Record<string, any> = {};
 
   for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) continue;
     const lowerKey = key.toLowerCase();
     if (sensitiveKeys.some((s) => lowerKey.includes(s))) {
       cleanObj[key] = '[PROTECTED]';
@@ -112,7 +113,6 @@ export function scrubSensitiveFields(obj: any): any {
       cleanObj[key] = value;
     }
   }
-
 
   return cleanObj;
 }

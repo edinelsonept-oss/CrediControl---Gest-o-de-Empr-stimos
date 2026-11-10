@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   User,
   Mail,
@@ -15,6 +15,7 @@ import {
   X,
   CreditCard,
   History,
+  ArrowLeft,
 } from 'lucide-react';
 import { EmployeeUser } from '../types';
 
@@ -35,6 +36,17 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({
   onDeny,
   onSuspend,
 }) => {
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen || !employee) return null;
 
   const isPending = employee.status === 'pending';
@@ -45,21 +57,32 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-[#181818] border border-neutral-800 rounded-3xl p-6 sm:p-7 w-full max-w-xl shadow-2xl space-y-6 animate-fadeIn font-['Plus_Jakarta_Sans',sans-serif]">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
-          <div className="flex items-center gap-2">
-            <Shield className="w-5 h-5 text-[#8BCF00]" />
-            <h3 className="text-base font-bold text-white font-['Outfit']">
-              Ficha Cadastral Completa do Funcionário
-            </h3>
-          </div>
+        {/* Navigation Top Bar with prominent "← VOLTAR" button */}
+        <div className="flex items-center justify-between border-b border-neutral-800 pb-3 gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 cursor-pointer"
+            className="flex items-center gap-2 text-xs font-bold text-neutral-200 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 hover:border-[#8BCF00] px-4 py-2 rounded-xl transition-all cursor-pointer shadow-sm active:scale-95 group shrink-0"
+            title="Voltar para a lista de funcionários"
           >
-            <X className="w-5 h-5" />
+            <ArrowLeft className="w-4 h-4 text-[#8BCF00] transition-transform group-hover:-translate-x-1" />
+            <span className="tracking-wide">← VOLTAR</span>
           </button>
+
+          <div className="flex items-center gap-2 min-w-0">
+            <Shield className="w-4 h-4 text-[#8BCF00] shrink-0 hidden sm:block" />
+            <h3 className="text-sm font-bold text-white font-['Outfit'] truncate hidden sm:block">
+              Ficha Cadastral do Funcionário
+            </h3>
+            <button
+              type="button"
+              onClick={onClose}
+              title="Fechar (Esc)"
+              className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Profile Card Summary */}
@@ -212,9 +235,10 @@ export const EmployeeDetailModal: React.FC<EmployeeDetailModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2.5 rounded-xl text-xs font-semibold text-neutral-400 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
+            className="px-4 py-2.5 rounded-xl text-xs font-semibold text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 transition-all cursor-pointer flex items-center gap-1.5"
           >
-            Fechar
+            <ArrowLeft className="w-3.5 h-3.5 text-[#8BCF00]" />
+            <span>Voltar à Lista</span>
           </button>
 
           <div className="flex items-center gap-2">

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   UserCheck,
   UserPlus,
@@ -57,6 +57,40 @@ export const EmployeesView: React.FC = () => {
   const [selectedEmployeeForDetail, setSelectedEmployeeForDetail] = useState<EmployeeUser | null>(null);
   const [visiblePasswords, setVisiblePasswords] = useState<{ [key: string]: boolean }>({});
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+
+  // Browser history & back button integration for detail view
+  const handleOpenDetail = (emp: EmployeeUser) => {
+    setSelectedEmployeeForDetail(emp);
+    try {
+      window.history.pushState({ modal: 'employee_detail', employeeId: emp.id }, '', window.location.href);
+    } catch (e) {
+      console.warn('History pushState note:', e);
+    }
+  };
+
+  const handleCloseDetail = () => {
+    setSelectedEmployeeForDetail(null);
+    try {
+      if (window.history.state && window.history.state.modal === 'employee_detail') {
+        window.history.back();
+      }
+    } catch (e) {
+      console.warn('History back note:', e);
+    }
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      // Return to employee list when browser/mobile back button is pressed
+      if (selectedEmployeeForDetail) {
+        setSelectedEmployeeForDetail(null);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [selectedEmployeeForDetail]);
 
   // Reason modal state
   const [reasonModalState, setReasonModalState] = useState<{
@@ -599,7 +633,7 @@ export const EmployeesView: React.FC = () => {
                 {/* View Full Profile Button */}
                 <button
                   type="button"
-                  onClick={() => setSelectedEmployeeForDetail(emp)}
+                  onClick={() => handleOpenDetail(emp)}
                   className="w-full bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 text-white font-bold py-2 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
                 >
                   <Eye className="w-3.5 h-3.5 text-[#8BCF00]" />
@@ -653,7 +687,7 @@ export const EmployeesView: React.FC = () => {
       {/* Modal: View Full Cadastral Profile */}
       <EmployeeDetailModal
         isOpen={!!selectedEmployeeForDetail}
-        onClose={() => setSelectedEmployeeForDetail(null)}
+        onClose={handleCloseDetail}
         employee={selectedEmployeeForDetail}
         onApprove={(id) => handleApprove(id)}
         onDeny={(id) => {
