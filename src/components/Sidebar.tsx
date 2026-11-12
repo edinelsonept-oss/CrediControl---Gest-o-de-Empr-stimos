@@ -17,6 +17,8 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { verifyLoansDueToday } from '../utils/dueDateVerifier';
+import { getTodayIso } from '../utils/calculations';
 
 interface SidebarProps {
   isMobileOpen: boolean;
@@ -33,19 +35,34 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, setIsMobileOpen 
     setIsLoanModalOpen,
     setIsClientModalOpen,
     notifications,
+    loans,
+    clients,
     logout,
   } = useApp();
 
+  const today = getTodayIso();
+  const dueTodayResult = React.useMemo(() => {
+    return verifyLoansDueToday(loans, clients, today, settings.defaultDailyFine);
+  }, [loans, clients, today, settings.defaultDailyFine]);
+
   const overdueCount = notifications.filter((n) => n.type === 'overdue').length;
+  const dueTodayCount = dueTodayResult.loansDueTodayCount;
 
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    {
+      id: 'dashboard',
+      label: 'Dashboard',
+      icon: LayoutDashboard,
+      badge: currentUser.role === 'admin' && dueTodayCount > 0 ? `${dueTodayCount} hoje` : undefined,
+      badgeColor: 'bg-amber-500 text-black font-extrabold',
+    },
     { id: 'clients', label: 'Clientes', icon: Users },
     {
       id: 'loans',
       label: 'Empréstimos',
       icon: Banknote,
       badge: overdueCount > 0 ? `${overdueCount} em atraso` : undefined,
+      badgeColor: 'bg-[#FF3B30] text-white',
     },
     { id: 'reports', label: 'Relatórios PDF/Excel', icon: FileBarChart },
     { id: 'map', label: 'Mapa de Clientes', icon: MapPin },
@@ -131,7 +148,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, setIsMobileOpen 
                   <span>{item.label}</span>
                 </div>
                 {item.badge && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#FF3B30] text-white animate-pulse">
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse ${
+                      item.badgeColor || 'bg-[#FF3B30] text-white'
+                    }`}
+                  >
                     {item.badge}
                   </span>
                 )}

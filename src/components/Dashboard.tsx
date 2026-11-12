@@ -32,12 +32,15 @@ import {
 import { useApp } from '../context/AppContext';
 import { formatCurrency, formatDate, getTodayIso, getDateOffsetIso, getLoanFinancialSummary, getMonthlyFinancialData } from '../utils/calculations';
 import { generateWhatsAppMessage, openWhatsAppChat } from '../utils/whatsapp';
+import { DueDateAlertBanner } from './DueDateAlertBanner';
+import { verifyLoansDueToday } from '../utils/dueDateVerifier';
 
 export const Dashboard: React.FC = () => {
   const {
     clients,
     loans,
     settings,
+    currentUser,
     setIsLoanModalOpen,
     setIsClientModalOpen,
     setSelectedLoanDetail,
@@ -45,8 +48,16 @@ export const Dashboard: React.FC = () => {
     setActiveTab,
   } = useApp();
 
+  const [reverifyCounter, setReverifyCounter] = React.useState(0);
+  const isAdmin = currentUser.role === 'admin';
+
   const today = getTodayIso();
   const tomorrow = getDateOffsetIso(1);
+
+  // Sistema de verificação de datas de vencimento do dia para o administrador
+  const dueDateVerification = React.useMemo(() => {
+    return verifyLoansDueToday(loans, clients, today, settings.defaultDailyFine);
+  }, [loans, clients, today, settings.defaultDailyFine, reverifyCounter]);
 
   // Financial summary aggregations
   let totalLoaned = 0;
@@ -125,6 +136,19 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12">
+      {/* Sistema de Verificação de Vencimentos - Alerta Visual no Dashboard para o Administrador */}
+      {isAdmin && (
+        <DueDateAlertBanner
+          verification={dueDateVerification}
+          settings={settings}
+          onSelectLoan={(loan) => {
+            setSelectedLoanDetail(loan);
+            setActiveTab('loans');
+          }}
+          onReverify={() => setReverifyCounter((c) => c + 1)}
+        />
+      )}
+
       {/* Top Banner & Quick Controls */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-neutral-900 via-[#1A1A1A] to-[#141414] p-6 rounded-3xl border border-neutral-800 shadow-xl">
         <div>
@@ -223,15 +247,34 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Vencendo Hoje */}
-        <div className="bg-[#1C1C1C] p-5 rounded-2xl border border-neutral-800 hover:border-neutral-700 transition-all shadow-md">
+        <div
+          onClick={() => {
+            if (loansDueToday > 0) {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          }}
+          className={`p-5 rounded-2xl border transition-all shadow-md ${
+            loansDueToday > 0
+              ? 'bg-[#1C1C1C] border-amber-500/50 hover:border-amber-400 bg-gradient-to-b from-amber-500/10 to-transparent cursor-pointer'
+              : 'bg-[#1C1C1C] border-neutral-800 hover:border-neutral-700'
+          }`}
+        >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-neutral-400">Vencendo Hoje</span>
-            <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
+            <span className={`text-xs font-semibold ${loansDueToday > 0 ? 'text-amber-300' : 'text-neutral-400'}`}>
+              Vencendo Hoje
+            </span>
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                loansDueToday > 0 ? 'bg-amber-500/20 text-amber-400 animate-pulse' : 'bg-amber-500/10 text-amber-400'
+              }`}
+            >
               <Clock className="w-5 h-5" />
             </div>
           </div>
           <p className="text-2xl font-extrabold text-amber-400 font-['Outfit']">{loansDueToday} Empréstimo(s)</p>
-          <p className="text-[11px] text-neutral-400 mt-1">Cobranças para a data de hoje</p>
+          <p className="text-[11px] text-neutral-400 mt-1">
+            {loansDueToday > 0 ? 'Clique para ver alerta prioritário' : 'Cobranças para a data de hoje'}
+          </p>
         </div>
 
         {/* Vencendo Amanhã */}

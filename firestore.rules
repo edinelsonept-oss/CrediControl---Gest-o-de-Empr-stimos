@@ -35,18 +35,25 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Employees Collection: Authenticated read/create (for new registration requests); only Admin can approve, deny, suspend, modify, or delete
+    // Employees Collection: Authenticated read; creation allowed for applicants (role=employee, status=pending) or Admin; updates and deletions strictly Admin
     match /employees/{employeeId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        isAdmin() ||
+        (request.resource.data.role == 'employee' &&
+         request.resource.data.status == 'pending')
+      );
       allow update, delete: if isAdmin();
     }
 
-    // Employee Notifications: Authenticated read/create/update (mark as read); deletion restricted to Admin
+    // Employee Notifications: Authenticated read/create; update allowed only for read flag or Admin; deletion restricted to Admin
     match /employee_notifications/{notificationId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+      );
       allow delete: if isAdmin();
     }
 
@@ -68,9 +75,9 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Default Fallback
+    // Default Fallback: Zero-Trust closed default
     match /{document=**} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if false;
     }
   }
 }

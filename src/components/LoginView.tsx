@@ -29,7 +29,6 @@ import {
   getRedirectResult,
   browserPopupRedirectResolver,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
 } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { useApp } from '../context/AppContext';
@@ -206,52 +205,36 @@ export const LoginView: React.FC = () => {
           return;
         }
 
-        const storedAdminPass = typeof window !== 'undefined' ? localStorage.getItem('credicontrol_admin_password') : null;
-        const isMasterPassword = password === '@Coelho60' || (storedAdminPass !== null && password === storedAdminPass);
-
+        let userCredential;
         try {
-          await signInWithEmailAndPassword(auth, ADMIN_EMAIL, password);
+          userCredential = await signInWithEmailAndPassword(auth, ADMIN_EMAIL, password);
         } catch (fbErr: any) {
           const fbCode = fbErr?.code || '';
-          if (
-            fbCode === 'auth/user-not-found' ||
-            fbCode === 'auth/invalid-credential' ||
-            fbCode === 'auth/user-disabled' ||
-            fbCode === 'auth/operation-not-allowed'
-          ) {
-            if (isMasterPassword) {
-              try {
-                await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, password);
-              } catch (createErr: any) {
-                console.info('Firebase auth auto-create note:', createErr?.message);
-              }
-            } else {
-              setErrorMessage('Senha incorreta para o administrador principal.');
-              setIsLoading(false);
-              return;
-            }
-          } else if (fbCode === 'auth/wrong-password') {
-            if (!isMasterPassword) {
-              setErrorMessage('Senha incorreta para o administrador principal.');
-              setIsLoading(false);
-              return;
-            }
+          if (fbCode === 'auth/wrong-password' || fbCode === 'auth/invalid-credential') {
+            setErrorMessage('Senha incorreta para o administrador principal.');
+          } else if (fbCode === 'auth/user-not-found') {
+            setErrorMessage('Conta de administrador não encontrada no Firebase Authentication. Cadastre-a no Firebase Console ou utilize a recuperação de senha.');
+          } else if (fbCode === 'auth/user-disabled') {
+            setErrorMessage('Esta conta de administrador foi desativada no Firebase Authentication.');
+          } else if (fbCode === 'auth/too-many-requests') {
+            setErrorMessage('Muitas tentativas malsucedidas de acesso. Aguarde alguns minutos ou redefina sua senha.');
+          } else if (fbCode === 'auth/network-request-failed') {
+            setErrorMessage('Falha de conexão com os servidores de autenticação do Firebase. Verifique sua rede.');
           } else {
-            console.warn('Firebase admin sign in warning:', fbErr.message);
-            if (!isMasterPassword) {
-              setErrorMessage('Credenciais incorretas ou falha de autenticação.');
-              setIsLoading(false);
-              return;
-            }
+            setErrorMessage(fbErr?.message || 'Falha de autenticação no Firebase.');
           }
+          setIsLoading(false);
+          return;
         }
 
+        const fbUser = userCredential.user;
         const adminUser = {
-          id: auth.currentUser?.uid || 'user_admin',
-          name: 'Edinelson (Admin)',
+          id: fbUser.uid,
+          name: fbUser.displayName || 'Edinelson (Admin)',
           email: ADMIN_EMAIL,
           role: 'admin' as const,
           avatarUrl:
+            fbUser.photoURL ||
             'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
         };
 
