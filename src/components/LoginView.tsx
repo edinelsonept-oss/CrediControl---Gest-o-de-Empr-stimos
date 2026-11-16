@@ -38,6 +38,13 @@ import { EmployeeStatusModal } from './EmployeeStatusModal';
 import { GoogleComplementaryModal } from './GoogleComplementaryModal';
 import { logAuditEvent } from '../utils/auditLogger';
 import { ADMIN_EMAIL } from '../config/env';
+import {
+  isAllowedFullNameChar,
+  normalizeFullName,
+  sanitizeFullNameInput,
+  sanitizeFullNamePaste,
+  validateEmployeeFullName,
+} from '../utils/securityValidator';
 
 export const LoginView: React.FC = () => {
   const {
@@ -302,12 +309,18 @@ export const LoginView: React.FC = () => {
     e.preventDefault();
     setErrorMessage('');
 
-    const cleanName = regName.trim();
+    const nameValidation = validateEmployeeFullName(regName);
+    if (!nameValidation.isValid) {
+      setErrorMessage(nameValidation.error || 'Nome completo inválido.');
+      return;
+    }
+
+    const cleanName = nameValidation.normalizedName;
     const cleanEmail = regEmail.trim().toLowerCase();
     const cleanPassword = regPassword.trim();
 
-    if (!cleanName || !cleanEmail || !cleanPassword) {
-      setErrorMessage('Preencha seu nome completo, e-mail e senha.');
+    if (!cleanEmail || !cleanPassword) {
+      setErrorMessage('Preencha seu e-mail e senha.');
       return;
     }
 
@@ -729,7 +742,32 @@ export const LoginView: React.FC = () => {
                 type="text"
                 required
                 value={regName}
-                onChange={(e) => setRegName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.ctrlKey || e.metaKey || e.altKey) return;
+                  if (e.key === 'Dead' || e.key === 'Process' || e.key === 'Unidentified') return;
+                  if (e.key.length === 1 && !isAllowedFullNameChar(e.key)) {
+                    e.preventDefault();
+                  }
+                }}
+                onChange={(e) => {
+                  const isComposing = (e.nativeEvent as InputEvent)?.isComposing ?? false;
+                  setRegName(sanitizeFullNameInput(e.target.value, isComposing));
+                }}
+                onCompositionEnd={(e) => {
+                  setRegName(sanitizeFullNameInput(e.currentTarget.value, false));
+                }}
+                onPaste={(e) => {
+                  e.preventDefault();
+                  const pasted = e.clipboardData?.getData('text') || '';
+                  const next = sanitizeFullNamePaste(
+                    regName,
+                    pasted,
+                    e.currentTarget.selectionStart,
+                    e.currentTarget.selectionEnd
+                  );
+                  setRegName(next);
+                }}
+                onBlur={() => setRegName((prev) => normalizeFullName(prev))}
                 placeholder="Ex: Carlos Oliveira"
                 className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl px-3.5 py-2 text-xs text-white outline-none"
               />

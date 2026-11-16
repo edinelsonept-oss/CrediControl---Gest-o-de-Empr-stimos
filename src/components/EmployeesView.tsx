@@ -34,6 +34,13 @@ import { ADMIN_EMAIL } from '../config/env';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { EmployeeDetailModal } from './EmployeeDetailModal';
 import { ReasonModal } from './ReasonModal';
+import {
+  isAllowedFullNameChar,
+  normalizeFullName,
+  sanitizeFullNameInput,
+  sanitizeFullNamePaste,
+  validateEmployeeFullName,
+} from '../utils/securityValidator';
 
 type TabType = 'all' | 'pending' | 'approved' | 'denied' | 'suspended';
 
@@ -181,12 +188,18 @@ export const EmployeesView: React.FC = () => {
     e.preventDefault();
     setFormError('');
 
-    const cleanName = formData.name.trim();
+    const nameValidation = validateEmployeeFullName(formData.name);
+    if (!nameValidation.isValid) {
+      setFormError(nameValidation.error || 'Nome completo inválido.');
+      return;
+    }
+
+    const cleanName = nameValidation.normalizedName;
     const cleanEmail = formData.email.trim().toLowerCase();
     const cleanPassword = formData.password.trim();
 
-    if (!cleanName || !cleanEmail || !cleanPassword) {
-      setFormError('Preencha o nome, e-mail e senha do funcionário.');
+    if (!cleanEmail || !cleanPassword) {
+      setFormError('Preencha o e-mail e senha do funcionário.');
       return;
     }
 
@@ -208,37 +221,42 @@ export const EmployeesView: React.FC = () => {
       return;
     }
 
-    if (editingEmployee) {
-      updateEmployee(editingEmployee.id, {
-        name: cleanName,
-        email: cleanEmail,
-        password: cleanPassword,
-        roleTitle: formData.roleTitle,
-        phone: formData.phone.trim() || 'Não informado',
-        cpf: formData.cpf.trim() || 'Não informado',
-        address: formData.address.trim() || 'Não informado',
-        city: formData.city.trim() || 'Salinópolis',
-        birthDate: formData.birthDate.trim() || 'Não informado',
-      });
-      showFeedback(`Funcionário "${cleanName}" atualizado com sucesso!`);
-    } else {
-      addEmployee({
-        name: cleanName,
-        email: cleanEmail,
-        password: cleanPassword,
-        role: 'employee',
-        roleTitle: formData.roleTitle,
-        phone: formData.phone.trim() || 'Não informado',
-        cpf: formData.cpf.trim() || 'Não informado',
-        address: formData.address.trim() || 'Não informado',
-        city: formData.city.trim() || 'Salinópolis',
-        birthDate: formData.birthDate.trim() || 'Não informado',
-        status: 'approved',
-        registrationMethod: 'email_password',
-        avatarUrl:
-          'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
-      });
-      showFeedback(`Login do funcionário "${cleanName}" cadastrado com status APROVADO!`);
+    try {
+      if (editingEmployee) {
+        updateEmployee(editingEmployee.id, {
+          name: cleanName,
+          email: cleanEmail,
+          password: cleanPassword,
+          roleTitle: formData.roleTitle,
+          phone: formData.phone.trim() || 'Não informado',
+          cpf: formData.cpf.trim() || 'Não informado',
+          address: formData.address.trim() || 'Não informado',
+          city: formData.city.trim() || 'Salinópolis',
+          birthDate: formData.birthDate.trim() || 'Não informado',
+        });
+        showFeedback(`Funcionário "${cleanName}" atualizado com sucesso!`);
+      } else {
+        addEmployee({
+          name: cleanName,
+          email: cleanEmail,
+          password: cleanPassword,
+          role: 'employee',
+          roleTitle: formData.roleTitle,
+          phone: formData.phone.trim() || 'Não informado',
+          cpf: formData.cpf.trim() || 'Não informado',
+          address: formData.address.trim() || 'Não informado',
+          city: formData.city.trim() || 'Salinópolis',
+          birthDate: formData.birthDate.trim() || 'Não informado',
+          status: 'approved',
+          registrationMethod: 'email_password',
+          avatarUrl:
+            'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
+        });
+        showFeedback(`Login do funcionário "${cleanName}" cadastrado com status APROVADO!`);
+      }
+    } catch (err: any) {
+      setFormError(err?.message || 'Erro ao salvar cadastro do funcionário.');
+      return;
     }
 
     setIsCreateModalOpen(false);
@@ -754,7 +772,38 @@ export const EmployeesView: React.FC = () => {
                   type="text"
                   required
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.ctrlKey || e.metaKey || e.altKey) return;
+                    if (e.key === 'Dead' || e.key === 'Process' || e.key === 'Unidentified') return;
+                    if (e.key.length === 1 && !isAllowedFullNameChar(e.key)) {
+                      e.preventDefault();
+                    }
+                  }}
+                  onChange={(e) => {
+                    const isComposing = (e.nativeEvent as InputEvent)?.isComposing ?? false;
+                    setFormData({
+                      ...formData,
+                      name: sanitizeFullNameInput(e.target.value, isComposing),
+                    });
+                  }}
+                  onCompositionEnd={(e) => {
+                    const cleanVal = sanitizeFullNameInput(e.currentTarget.value, false);
+                    setFormData((prev) => ({ ...prev, name: cleanVal }));
+                  }}
+                  onPaste={(e) => {
+                    e.preventDefault();
+                    const pasted = e.clipboardData?.getData('text') || '';
+                    const next = sanitizeFullNamePaste(
+                      formData.name,
+                      pasted,
+                      e.currentTarget.selectionStart,
+                      e.currentTarget.selectionEnd
+                    );
+                    setFormData((prev) => ({ ...prev, name: next }));
+                  }}
+                  onBlur={() =>
+                    setFormData((prev) => ({ ...prev, name: normalizeFullName(prev.name) }))
+                  }
                   placeholder="Ex: Mariana Silva"
                   className="w-full bg-neutral-900 border border-neutral-800 focus:border-[#8BCF00] rounded-xl px-3.5 py-2.5 text-xs text-white outline-none transition-all"
                 />

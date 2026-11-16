@@ -42,6 +42,7 @@ import {
   validateClient,
   validateLoan,
   validatePayment,
+  validateEmployeeFullName,
 } from '../utils/securityValidator';
 import { logAuditEvent, getLocalAuditLogs } from '../utils/auditLogger';
 import { executeAtomicPayment } from '../utils/financialTransactions';
@@ -1201,8 +1202,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error('Operação não autorizada');
     }
 
+    const nameValidation = validateEmployeeFullName(employeeData.name);
+    if (!nameValidation.isValid) {
+      throw new Error(nameValidation.error || 'Nome completo do funcionário inválido.');
+    }
+
     const newEmployee: EmployeeUser = {
       ...employeeData,
+      name: nameValidation.normalizedName,
       id: `emp_${Date.now()}`,
       createdAt: new Date().toISOString(),
       createdByName: currentUser.name || 'Edinelson (Admin)',
@@ -1237,8 +1244,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
+    let sanitizedEmployeeData: Partial<EmployeeUser> = employeeData;
+    if (employeeData.name !== undefined) {
+      const nameValidation = validateEmployeeFullName(employeeData.name);
+      if (!nameValidation.isValid) {
+        throw new Error(nameValidation.error || 'Nome completo do funcionário inválido.');
+      }
+      sanitizedEmployeeData = {
+        ...employeeData,
+        name: nameValidation.normalizedName,
+      };
+    }
+
     setEmployees((prev) => {
-      const updated = prev.map((e) => (e.id === id ? { ...e, ...employeeData } : e));
+      const updated = prev.map((e) => (e.id === id ? { ...e, ...sanitizedEmployeeData } : e));
       const target = updated.find((e) => e.id === id);
       if (target) {
         if (db && auth.currentUser) {
@@ -1340,7 +1359,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     password?: string;
   }): Promise<{ success: boolean; employee: EmployeeUser; message: string }> => {
     const cleanEmail = data.email.trim().toLowerCase();
-    const cleanName = data.name.trim();
+    const nameValidation = validateEmployeeFullName(data.name);
+
+    if (!nameValidation.isValid) {
+      return {
+        success: false,
+        employee: {} as EmployeeUser,
+        message: nameValidation.error || 'Nome completo inválido.',
+      };
+    }
+
+    const cleanName = nameValidation.normalizedName;
 
     // Check if employee already exists to avoid duplicates
     const existing = employees.find((e) => e.email.trim().toLowerCase() === cleanEmail);

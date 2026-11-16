@@ -21,6 +21,138 @@ export function sanitizeString(val: string | undefined | null): string {
     .trim();
 }
 
+const FULL_NAME_CHAR_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u017F]$/;
+const DISALLOWED_FULL_NAME_CHARS_REGEX = /[^A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u017F ]/g;
+const DISALLOWED_FULL_NAME_CHARS_COMPOSING_REGEX = /[^A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u017F\u0300-\u036f ]/g;
+const VALID_FULL_NAME_REGEX =
+  /^[A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u017F]+(?: [A-Za-zÀ-ÖØ-öø-ÿ\u0100-\u017F]+)+$/;
+
+/**
+ * Checks if a single character is an allowed Latin letter (including accented letters) or space.
+ */
+export function isAllowedFullNameChar(char: string): boolean {
+  if (!char) return false;
+  if (char === ' ') return true;
+  const normalized = char.normalize('NFC');
+  return Array.from(normalized).every((c) => FULL_NAME_CHAR_REGEX.test(c));
+}
+
+/**
+ * Removes leading, trailing, and duplicate spaces while NFC-normalizing Unicode characters.
+ */
+export function normalizeFullName(val: string | undefined | null): string {
+  if (!val || typeof val !== 'string') return '';
+  return val.normalize('NFC').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Sanitizes live typing inside the full name input field:
+ * - Blocks numbers, special characters, symbols, and emojis
+ * - Prevents leading and duplicate spaces while preserving a trailing space between words
+ * - Respects active IME / dead-key composition for accented letters
+ */
+export function sanitizeFullNameInput(val: string, isComposing = false): string {
+  if (!val || typeof val !== 'string') return '';
+  if (isComposing) {
+    return val
+      .replace(DISALLOWED_FULL_NAME_CHARS_COMPOSING_REGEX, '')
+      .replace(/\s{2,}/g, ' ')
+      .replace(/^ +/, '');
+  }
+  return val
+    .normalize('NFC')
+    .replace(DISALLOWED_FULL_NAME_CHARS_REGEX, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^ +/, '');
+}
+
+/**
+ * Sanitizes pasted text before inserting into the full name input field.
+ */
+export function sanitizeFullNamePaste(
+  currentValue: string,
+  pastedText: string,
+  selectionStart: number | null,
+  selectionEnd: number | null
+): string {
+  const safeCurrent = currentValue || '';
+  const start = selectionStart ?? safeCurrent.length;
+  const end = selectionEnd ?? safeCurrent.length;
+  const cleanedPaste = (pastedText || '')
+    .normalize('NFC')
+    .replace(DISALLOWED_FULL_NAME_CHARS_REGEX, '');
+  const merged = safeCurrent.slice(0, start) + cleanedPaste + safeCurrent.slice(end);
+  return sanitizeFullNameInput(merged, false);
+}
+
+export interface FullNameValidationResult {
+  isValid: boolean;
+  normalizedName: string;
+  error?: string;
+}
+
+/**
+ * Validates an employee's full name before form submission and before saving to Firestore:
+ * - Only A-Z / accented Latin letters and single spaces between words
+ * - No numbers, special characters, symbols, or emojis
+ * - At least two words (first name + surname)
+ * - No leading, trailing, or duplicate spaces
+ */
+export function validateEmployeeFullName(
+  rawName: string | undefined | null
+): FullNameValidationResult {
+  const normalized = normalizeFullName(rawName);
+
+  if (!normalized) {
+    return {
+      isValid: false,
+      normalizedName: '',
+      error: 'Informe o nome completo utilizando apenas letras e espaços.',
+    };
+  }
+
+  if (/\d/.test(normalized)) {
+    return {
+      isValid: false,
+      normalizedName: normalized,
+      error: 'O nome completo não pode conter números. Utilize apenas letras e espaços.',
+    };
+  }
+
+  if (DISALLOWED_FULL_NAME_CHARS_REGEX.test(normalized)) {
+    DISALLOWED_FULL_NAME_CHARS_REGEX.lastIndex = 0;
+    return {
+      isValid: false,
+      normalizedName: normalized,
+      error:
+        'O nome completo não pode conter caracteres especiais, símbolos ou emojis. Utilize apenas letras e espaços.',
+    };
+  }
+  DISALLOWED_FULL_NAME_CHARS_REGEX.lastIndex = 0;
+
+  const words = normalized.split(' ').filter(Boolean);
+  if (words.length < 2) {
+    return {
+      isValid: false,
+      normalizedName: normalized,
+      error: 'Informe o nome completo com nome e sobrenome (mínimo duas palavras).',
+    };
+  }
+
+  if (!VALID_FULL_NAME_REGEX.test(normalized)) {
+    return {
+      isValid: false,
+      normalizedName: normalized,
+      error: 'Nome completo inválido. Utilize apenas letras de A a Z e espaços.',
+    };
+  }
+
+  return {
+    isValid: true,
+    normalizedName: normalized,
+  };
+}
+
 /**
  * Validates Brazilian CPF with Modulo 11 checksum.
  */
